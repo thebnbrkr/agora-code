@@ -164,3 +164,25 @@ async def _mock_ok(args):
 
 async def _mock_error(args):
     return {"body": {}, "status": 404, "_error": "Not found", "_latency_ms": 20.0}
+
+
+
+def test_merge_stats_zero_latency():
+    """✅ NEW TEST: Zero latency should be recorded (not treated as falsy)."""
+    from agora_code.agent import _merge_stats
+    
+    stats = _merge_stats({}, {"status": 200, "_latency_ms": 0.0})
+    
+    assert stats["total_calls"] == 1
+    assert stats["latencies"] == [0.0]
+    assert stats["avg_latency_ms"] == 0.0
+
+
+def test_merge_stats_none_latency():
+    """✅ NEW TEST: Missing latency should not be added to list."""
+    from agora_code.agent import _merge_stats
+    
+    stats = _merge_stats({}, {"status": 200})  # No _latency_ms
+    
+    assert stats["latencies"] == []
+    assert stats["avg_latency_ms"] is None

@@ -40,7 +40,7 @@ async def test_scan_and_serve_fastapi(tmp_path):
     # Tier 2: Python AST scan
     catalog = await scan(str(tmp_path))
     assert len(catalog.routes) >= 2
-    assert catalog.extractor == "python_ast"
+    assert catalog.extractor == "ast"
 
     # Build MCP server (no memory, no auth)
     server = MCPServer(catalog, base_url="http://localhost:8000")

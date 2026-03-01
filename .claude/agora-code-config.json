@@ -1,0 +1,16 @@
+{
+    "name": "agora-code-self",
+    "description": "Scan agora-code's own test fixtures",
+    "command": "python3",
+    "args": [
+        "-m",
+        "agora_code.cli",
+        "serve",
+        "tests/fixtures",
+        "--url",
+        "http://localhost:8000"
+    ],
+    "env": {
+        "PYTHONPATH": "."
+    }
+}
