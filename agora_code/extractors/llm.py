@@ -17,6 +17,19 @@ from typing import List
 
 from agora_code.models import Param, Route, RouteCatalog
 
+# Retry logic (optional dependency)
+try:
+    from tenacity import retry, stop_after_attempt, wait_exponential
+    _HAS_TENACITY = True
+except ImportError:
+    _HAS_TENACITY = False
+    # Fallback: no-op decorator
+    def retry(*args, **kwargs):
+        def decorator(func):
+            return func
+        return decorator
+    stop_after_attempt = wait_exponential = lambda *a, **k: None
+
 # File extensions to consider
 _SUPPORTED_EXTS = {
     ".py", ".js", ".ts", ".mjs", ".jsx", ".tsx",
@@ -122,6 +135,11 @@ def _make_openai_llm(model: str):
         raise ImportError("Install openai: pip install agora-code[openai]")
     client = AsyncOpenAI()
 
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=1, max=10),
+        reraise=True,
+    )
     async def call(source: str) -> str:
         resp = await client.chat.completions.create(
             model=model,
@@ -149,8 +167,13 @@ def _make_gemini_llm(model: str):
         generation_config={"response_mime_type": "application/json"},
     )
 
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=1, max=10),
+        reraise=True,
+    )
     async def call(source: str) -> str:
-        resp = gen_model.generate_content(
+        resp = await gen_model.generate_content_async(
             f"Extract routes from this file:\n\n```\n{source}\n```"
         )
         return resp.text or "{}"

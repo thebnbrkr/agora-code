@@ -402,7 +402,7 @@ def _merge_stats(prev: Dict, result: Dict) -> Dict:
     # Rolling window of last 50 latency samples
     latencies: List[float] = prev.get("latencies", [])
     lat = result.get("_latency_ms")
-    if lat:
+    if lat is not None:  # ✅ FIX: Now handles 0.0 correctly
         latencies = (latencies + [lat])[-50:]
 
     avg_lat = sum(latencies) / len(latencies) if latencies else None

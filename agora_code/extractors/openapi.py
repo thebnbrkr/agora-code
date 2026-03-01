@@ -12,7 +12,10 @@ Supports:
 
 from __future__ import annotations
 
+import ipaddress
 import json
+import sys
+import urllib.parse
 import urllib.request
 from pathlib import Path
 from typing import Optional
@@ -39,6 +42,40 @@ _LOCAL_FILES = [
     "docs/openapi.json",
     "api/openapi.json",
 ]
+
+
+def _is_safe_url(url: str) -> bool:
+    """
+    Validate URL to prevent SSRF attacks.
+    Blocks localhost, private IPs, and cloud metadata endpoints.
+    """
+    try:
+        parsed = urllib.parse.urlparse(url)
+        hostname = parsed.hostname
+        
+        if not hostname:
+            return False
+        
+        # Block localhost
+        if hostname in ("localhost", "127.0.0.1", "0.0.0.0", "::1"):
+            return False
+        
+        # Try to resolve IP
+        try:
+            ip = ipaddress.ip_address(hostname)
+            # Block private networks
+            if ip.is_private or ip.is_loopback or ip.is_link_local:
+                return False
+        except ValueError:
+            # Hostname, not IP - check against known bad patterns
+            if hostname.startswith("169.254."):  # AWS metadata
+                return False
+            if hostname.endswith(".internal"):  # Internal domains
+                return False
+        
+        return True
+    except Exception:
+        return False
 
 
 def can_handle(target: str) -> bool:
@@ -99,6 +136,11 @@ def _find_local(repo_path: str) -> Optional[dict]:
 
 
 def _get_json(url: str) -> Optional[dict]:
+    # SSRF protection
+    if not _is_safe_url(url):
+        print(f"⚠️  Skipping potentially unsafe URL: {url}", file=sys.stderr)
+        return None
+    
     try:
         with urllib.request.urlopen(url, timeout=5) as resp:  # noqa: S310
             if resp.status == 200:
