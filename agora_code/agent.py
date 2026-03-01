@@ -411,7 +411,7 @@ def _merge_stats(prev: Dict, result: Dict) -> Dict:
         "total_calls": calls,
         "error_count": errors,
         "success_rate": round(1 - errors / calls, 3),
-        "avg_latency_ms": round(avg_lat, 1) if avg_lat else None,
+"avg_latency_ms": round(avg_lat, 1) if avg_lat is not None else None,
         "last_error": result.get("_error"),
         "last_called_at": time.time(),
         "latencies": latencies,
