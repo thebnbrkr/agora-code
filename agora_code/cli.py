@@ -142,7 +142,7 @@ def serve(target, url, use_llm, llm_provider, auth_token, auth_type, memory, db_
     elif auth_type != "none":
         _echo("⚠️  No auth token set. Set AGORA_AUTH_TOKEN or pass --auth-token", err=True)
 
-    # Memory
+    # Memory (optional - only if agora-mem is installed)
     agent_memory = None
     if memory:
         try:
@@ -155,13 +155,27 @@ def serve(target, url, use_llm, llm_provider, auth_token, auth_type, memory, db_
             _echo("⚠️  agora-mem not installed — running without memory. "
                   "pip install agora-code[memory]", err=True)
 
-    server = MCPServer(
-        catalog=catalog,
-        base_url=url,
-        memory=agent_memory,
-        auth=auth,
-        edition="enterprise" if enterprise else "community",
-    )
+    #  FIX: Only pass memory if MCPServer supports it
+    # Check if MCPServer accepts memory parameter
+    from inspect import signature
+    mcp_params = signature(MCPServer.__init__).parameters
+    
+    if 'memory' in mcp_params and agent_memory is not None:
+        server = MCPServer(
+            catalog=catalog,
+            base_url=url,
+            memory=agent_memory,
+            auth=auth,
+            edition="enterprise" if enterprise else "community",
+        )
+    else:
+        # Memory not supported yet or not available
+        server = MCPServer(
+            catalog=catalog,
+            base_url=url,
+            auth=auth,
+            edition="enterprise" if enterprise else "community",
+        )
 
     _echo(f"🚀 MCP server ready ({len(catalog)} tools)", err=True)
     asyncio.run(server.serve())
