@@ -156,11 +156,11 @@ class RouteCatalog:
 
             tool = {
                 "name": route.tool_name,
-                "description": route.description or f"{route.method} {route.path}",
+                "description": _build_tool_description(route),
                 "inputSchema": {
                     "type": "object",
                     "properties": properties,
-                    **({"required": required} if required else {}),
+                    **({} if not required else {"required": required}),
                 },
                 "_meta": {
                     "method": route.method,
@@ -249,3 +249,44 @@ def _py_type_to_json(py_type: str) -> str:
         "str": "string", "int": "integer", "float": "number",
         "bool": "boolean", "list": "array", "dict": "object",
     }.get(py_type.lower(), "string")
+
+
+def _build_tool_description(route: "Route") -> str:
+    """
+    Build an enriched MCP tool description with USE THIS WHEN: guidance.
+
+    Inspired by FlowGuardian's mcp_server.py tool description pattern.
+    Tells the agent WHEN to call this tool proactively, not just what it does.
+    """
+    base = route.description or f"{route.method} {route.path}"
+
+    # Build USE THIS WHEN based on method + path
+    method = route.method.upper()
+    path = route.path
+
+    # Infer a natural-language verb from method
+    verb_map = {
+        "GET": "retrieve", "POST": "create", "PUT": "update",
+        "PATCH": "update", "DELETE": "delete",
+    }
+    verb = verb_map.get(method, "call")
+
+    # Build resource name from path (e.g. /products/{id} → products)
+    parts = [p for p in path.strip("/").split("/") if p and not p.startswith("{")]
+    resource = parts[-1] if parts else "resource"
+
+    # Compose USE THIS WHEN section
+    when_lines = [f"- User wants to {verb} {resource}"]
+    if method == "GET" and "{" in path:
+        when_lines.append(f"- User asks for a specific {resource} by ID")
+    elif method == "GET":
+        when_lines.append(f"- User asks to list, fetch, or show {resource}")
+    elif method in ("POST",):
+        when_lines.append(f"- User wants to add or submit a new {resource}")
+    elif method in ("PUT", "PATCH"):
+        when_lines.append(f"- User wants to modify an existing {resource}")
+    elif method == "DELETE":
+        when_lines.append(f"- User wants to remove a {resource}")
+
+    when_section = "\n".join(when_lines)
+    return f"{base}\n\nUSE THIS WHEN:\n{when_section}"

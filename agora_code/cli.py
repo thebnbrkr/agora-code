@@ -277,6 +277,276 @@ def auth(target, auth_type, token):
 
 
 # --------------------------------------------------------------------------- #
+#  chat                                                                        #
+# --------------------------------------------------------------------------- #
+
+@main.command()
+@click.argument("target")
+@click.option("--url", "-u", required=True, help="Base URL of the live API")
+@click.option("--use-llm", is_flag=True, default=False)
+@click.option("--level", default="summary",
+              type=click.Choice(["index", "summary", "detail", "full"]),
+              help="TLDR compression level for context (default: summary)")
+@click.option("--auth-token", envvar="AGORA_AUTH_TOKEN", default=None)
+@click.option("--auth-type", default="bearer",
+              type=click.Choice(["bearer", "api-key", "basic", "none"]))
+def chat(target, url, use_llm, level, auth_token, auth_type):
+    """Start an interactive chat session to talk to your API in natural language.
+
+    \b
+    agora-code chat ./my-api --url http://localhost:8000
+    agora-code chat https://api.example.com --url https://api.example.com --level index
+    """
+    try:
+        import openai  # noqa: F401
+    except ImportError:
+        _echo("❌ openai not installed. Run: pip install agora-code[llm]")
+        sys.exit(1)
+
+    api_key = os.environ.get("OPENAI_API_KEY")
+    if not api_key:
+        _echo("❌ OPENAI_API_KEY environment variable not set.")
+        sys.exit(1)
+
+    from agora_code.scanner import scan as do_scan
+    from agora_code.tldr import compress_catalog
+
+    _echo(f"🔍 Scanning {target!r} ({level} compression)...")
+    catalog = asyncio.run(do_scan(target, use_llm=use_llm))
+
+    if len(catalog) == 0:
+        _echo("⚠️  No routes found. Try --use-llm.")
+        return
+
+    # Build compressed context for the LLM
+    tldr = compress_catalog(catalog, level=level)
+    _echo(f"✅ {len(catalog)} routes loaded — context: {len(tldr.split())} words\n")
+    _echo(tldr)
+    _echo("\n" + "─" * 60)
+    _echo("💬 Chat with your API. Type 'exit' to quit.\n")
+
+    auth = {}
+    if auth_type != "none" and auth_token:
+        auth = {"type": auth_type, "token": auth_token}
+
+    from agora_code.agent import MCPServer
+    server = MCPServer(catalog=catalog, base_url=url, auth=auth)
+
+    async def _chat_loop():
+        from openai import AsyncOpenAI
+        client = AsyncOpenAI()
+
+        system_prompt = (
+            f"You are an assistant that helps call an API.\n\n"
+            f"Available routes:\n{tldr}\n\n"
+            "When the user asks to do something, identify the right route "
+            "and call the appropriate tool. Be concise."
+        )
+        messages = [{"role": "system", "content": system_prompt}]
+        tools = catalog.to_mcp_tools()
+
+        while True:
+            try:
+                user_input = click.prompt("You", prompt_suffix="> ")
+            except (EOFError, KeyboardInterrupt):
+                _echo("\n👋 Bye!")
+                break
+
+            if user_input.strip().lower() in ("exit", "quit", "q"):
+                _echo("👋 Bye!")
+                break
+
+            messages.append({"role": "user", "content": user_input})
+
+            # Build OpenAI function definitions from MCP tools
+            openai_tools = [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": t["name"],
+                        "description": t["description"],
+                        "parameters": t["inputSchema"],
+                    },
+                }
+                for t in tools
+            ]
+
+            resp = await client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=messages,
+                tools=openai_tools,
+                tool_choice="auto",
+            )
+            msg = resp.choices[0].message
+
+            if msg.tool_calls:
+                for tc in msg.tool_calls:
+                    tool_name = tc.function.name
+                    import json as _json
+                    args = _json.loads(tc.function.arguments or "{}")
+                    _echo(f"  🔧 Calling {tool_name}({args})")
+                    result, _ = await server._nodes[tool_name].run(args) if tool_name in server._nodes else ({"body": {"error": "unknown tool"}, "status": 404}, [])
+                    result_text = _json.dumps(result.get("body", {}), indent=2)[:1000]
+                    messages.append({"role": "assistant", "content": None, "tool_calls": [tc.model_dump()]})
+                    messages.append({"role": "tool", "tool_call_id": tc.id, "content": result_text})
+
+                # Follow-up response after tool call
+                follow = await client.chat.completions.create(
+                    model="gpt-4o-mini",
+                    messages=messages,
+                )
+                reply = follow.choices[0].message.content or ""
+            else:
+                reply = msg.content or ""
+
+            _echo(f"\n🤖 {reply}\n")
+            messages.append({"role": "assistant", "content": reply})
+
+    asyncio.run(_chat_loop())
+
+
+# --------------------------------------------------------------------------- #
+#  status                                                                      #
+# --------------------------------------------------------------------------- #
+
+@main.command()
+@click.option("--db-path", default="./agora_agent_memory.db")
+def status(db_path):
+    """Show what's been scanned and cached.
+
+    \b
+    agora-code status
+    """
+    try:
+        from agora_mem import MemoryStore
+        from agora_code.memory_layer import AgentMemory
+    except ImportError:
+        _echo("❌ agora-mem not installed. Run: pip install agora-code[memory]")
+        sys.exit(1)
+
+    store = MemoryStore(storage="sqlite", db_path=db_path)
+    memory = AgentMemory(store)
+
+    async def _run():
+        session_ids = await store.list_sessions()
+        scan_sessions = [s for s in session_ids if s.startswith("scan:")]
+
+        if not scan_sessions:
+            _echo("📭 No scans cached yet. Run: agora-code scan <target>")
+            return
+
+        _echo(f"\n📦 Cached scans ({len(scan_sessions)}):\n")
+        for sid in scan_sessions:
+            cache = await memory.load_scan_cache(sid.removeprefix("scan:"))
+            if cache:
+                import time as _time
+                age = _time.time() - cache.get("scanned_at", 0)
+                age_str = f"{int(age // 3600)}h ago" if age > 3600 else f"{int(age // 60)}m ago"
+                _echo(
+                    f"  ✅ {cache['target']} — "
+                    f"{cache['route_count']} routes via {cache['extractor']} "
+                    f"({age_str})"
+                )
+
+    asyncio.run(_run())
+
+
+# --------------------------------------------------------------------------- #
+#  inject                                                                      #
+# --------------------------------------------------------------------------- #
+
+@main.command()
+@click.option("--level", default="summary",
+              type=click.Choice(["index", "summary", "detail", "full"]),
+              help="Compression level")
+@click.option("--quiet", is_flag=True, default=False,
+              help="Plain output (no headers, for Claude hook injection)")
+@click.option("--db-path", default="./agora_agent_memory.db")
+def inject(level, quiet, db_path):
+    """Inject compressed route context (used by Claude hooks at session start).
+
+    \b
+    agora-code inject                  # prints summary-level context
+    agora-code inject --level index    # ultra-compact
+    agora-code inject --quiet          # plain text for hook injection
+    """
+    try:
+        from agora_mem import MemoryStore
+        from agora_code.memory_layer import AgentMemory
+    except ImportError:
+        if not quiet:
+            _echo("⚠️  agora-mem not installed — no cached context available.")
+        return
+
+    store = MemoryStore(storage="sqlite", db_path=db_path)
+    memory = AgentMemory(store)
+
+    async def _run():
+        session_ids = await store.list_sessions()
+        scan_sessions = [s for s in session_ids if s.startswith("scan:")]
+
+        if not scan_sessions:
+            if not quiet:
+                _echo("📭 No scans cached. Run: agora-code scan <target> first.")
+            return
+
+        parts = []
+        if not quiet:
+            parts.append("<agora-code-context>\n")
+
+        for sid in scan_sessions:
+            cache = await memory.load_scan_cache(sid.removeprefix("scan:"))
+            if cache:
+                tldr_key = f"tldr_{level}"
+                if level == "full":
+                    tldr = cache.get("routes_json", "")
+                else:
+                    tldr = cache.get(tldr_key, cache.get("tldr_summary", ""))
+                if tldr:
+                    parts.append(tldr)
+
+        if not quiet:
+            parts.append("\n</agora-code-context>")
+
+        click.echo("\n".join(parts))
+
+    asyncio.run(_run())
+
+
+# --------------------------------------------------------------------------- #
+#  state                                                                       #
+# --------------------------------------------------------------------------- #
+
+@main.group()
+def state():
+    """Manage agora-code session state."""
+    pass
+
+
+@state.command(name="save")
+@click.option("--db-path", default="./agora_agent_memory.db")
+def state_save(db_path):
+    """Save current session state (called by PreCompact Claude hook)."""
+    # Re-scan current directory and refresh cache
+    from agora_code.scanner import scan as do_scan
+
+    async def _run():
+        try:
+            catalog = await do_scan(".", use_llm=False)
+            if len(catalog) == 0:
+                return
+            from agora_mem import MemoryStore
+            from agora_code.memory_layer import AgentMemory
+            store = MemoryStore(storage="sqlite", db_path=db_path)
+            memory = AgentMemory(store)
+            await memory.store_scan_result(".", catalog, ttl_seconds=0)  # no expiry
+        except Exception:
+            pass  # Hooks should never crash Claude
+
+    asyncio.run(_run())
+
+
+# --------------------------------------------------------------------------- #
 #  Helpers                                                                     #
 # --------------------------------------------------------------------------- #
 

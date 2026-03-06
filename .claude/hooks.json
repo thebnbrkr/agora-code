@@ -1,13 +1,37 @@
 {
     "hooks": {
-        "on_file_save": {
-            "pattern": "**/*.py",
-            "command": "agora-code scan . --output .agora-code/routes.json",
-            "description": "Auto-scan API routes when Python files change"
-        },
-        "on_project_open": {
-            "command": "echo '💡 Tip: Run `agora-code scan .` to discover API routes'",
-            "description": "Remind about agora-code scanning"
-        }
+        "SessionStart": [
+            {
+                "matcher": "",
+                "hooks": [
+                    {
+                        "type": "command",
+                        "command": "agora-code inject --quiet"
+                    }
+                ]
+            }
+        ],
+        "PreCompact": [
+            {
+                "matcher": "",
+                "hooks": [
+                    {
+                        "type": "command",
+                        "command": "agora-code state save"
+                    }
+                ]
+            }
+        ],
+        "PostToolUse": [
+            {
+                "matcher": "Write|Edit|MultiEdit",
+                "hooks": [
+                    {
+                        "type": "command",
+                        "command": "agora-code scan . --cache --quiet"
+                    }
+                ]
+            }
+        ]
     }
 }

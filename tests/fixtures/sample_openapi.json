@@ -1,0 +1,83 @@
+{
+    "openapi": "3.0.0",
+    "info": {
+        "title": "Test API",
+        "version": "1.0.0"
+    },
+    "paths": {
+        "/users/{user_id}": {
+            "get": {
+                "summary": "Get a user by ID",
+                "tags": [
+                    "users"
+                ],
+                "parameters": [
+                    {
+                        "name": "user_id",
+                        "in": "path",
+                        "required": true,
+                        "schema": {
+                            "type": "integer"
+                        }
+                    },
+                    {
+                        "name": "include_details",
+                        "in": "query",
+                        "required": false,
+                        "schema": {
+                            "type": "boolean"
+                        }
+                    }
+                ]
+            }
+        },
+        "/users": {
+            "post": {
+                "summary": "Create a user",
+                "tags": [
+                    "users"
+                ],
+                "requestBody": {
+                    "required": true,
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "type": "object",
+                                "required": [
+                                    "name",
+                                    "email"
+                                ],
+                                "properties": {
+                                    "name": {
+                                        "type": "string"
+                                    },
+                                    "email": {
+                                        "type": "string"
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/products": {
+            "get": {
+                "summary": "List products",
+                "tags": [
+                    "products"
+                ],
+                "parameters": [
+                    {
+                        "name": "category",
+                        "in": "query",
+                        "required": false,
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ]
+            }
+        }
+    }
+}

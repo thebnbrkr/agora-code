@@ -1,7 +1,8 @@
 """
-memory_layer.py — AgentMemory: wraps agora-mem for API call tracking.
+memory_layer.py — AgentMemory: wraps agora-mem for API call tracking and scan caching.
 
 Stores every API call, remembers failures, detects patterns.
+Also caches scan results so re-scanning the same target is fast.
 Optional — CodebaseAgent works without it, but this is what makes
 it smart instead of just a fancy API wrapper.
 
@@ -17,7 +18,10 @@ from __future__ import annotations
 import json
 import time
 from collections import defaultdict
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from agora_code.models import RouteCatalog
 
 # --------------------------------------------------------------------------- #
 #  AgentMemory                                                                 #
@@ -49,6 +53,59 @@ class AgentMemory:
             store: agora_mem.MemoryStore instance
         """
         self._store = store
+
+    # ------------------------------------------------------------------ #
+    #  Scan cache                                                          #
+    # ------------------------------------------------------------------ #
+
+    async def store_scan_result(
+        self,
+        target: str,
+        catalog: "RouteCatalog",
+        ttl_seconds: int = 86400,  # 24h default
+    ) -> None:
+        """
+        Cache a scan result so the same target isn't re-scanned.
+
+        Session key: "scan:{target}"
+        Stores: route JSON + extractor tier + TLDR at each level.
+        TTL: 24h by default (pass 0 for no expiry).
+        """
+        from agora_code.tldr import compress_catalog
+
+        session_id = f"scan:{target}"
+        state = {
+            "target": target,
+            "source": catalog.source,
+            "extractor": catalog.extractor,
+            "route_count": len(catalog.routes),
+            "routes_json": catalog.to_json(),
+            "tldr_index": compress_catalog(catalog, level="index"),
+            "tldr_summary": compress_catalog(catalog, level="summary"),
+            "tldr_detail": compress_catalog(catalog, level="detail"),
+            "scanned_at": time.time(),
+        }
+        await self._store.store(
+            session_id, state,
+            ttl_seconds=ttl_seconds if ttl_seconds > 0 else None,
+        )
+
+    async def load_scan_cache(
+        self,
+        target: str,
+    ) -> Optional[Dict]:
+        """
+        Load a cached scan result by target URL or path.
+
+        Returns the state dict if a fresh cache exists, None otherwise.
+        A cache is considered stale if the record has expired (TTL handled
+        by agora-mem's MemoryStore automatically).
+        """
+        session_id = f"scan:{target}"
+        record = await self._store.load(session_id)
+        if record is None:
+            return None
+        return record.state
 
     # ------------------------------------------------------------------ #
     #  Write                                                               #
