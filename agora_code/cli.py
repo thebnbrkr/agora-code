@@ -773,6 +773,41 @@ def recall(query, limit):
         _echo("")
 
 
+
+# --------------------------------------------------------------------------- #
+#  memory-server                                                               #
+# --------------------------------------------------------------------------- #
+
+@main.command("memory-server")
+def memory_server():
+    """Start a project-agnostic MCP server for day-to-day coding.
+
+    \b
+    Exposes 6 session/memory tools to any AI coding assistant:
+      get_session_context  — what you're working on (auto-injected on start)
+      save_checkpoint      — save goal, hypothesis, files changed
+      store_learning       — permanent findings across all projects
+      recall_learnings     — search past findings semantically
+      complete_session     — archive session to long-term memory
+      get_memory_stats     — storage stats
+
+    No target directory or running API needed.
+
+    \b
+    Add to Antigravity / Claude Desktop (.claude/claude_desktop_config.json):
+    {
+      "mcpServers": {
+        "agora-memory": {
+          "command": "agora-code",
+          "args": ["memory-server"]
+        }
+      }
+    }
+    """
+    from agora_code.memory_server import serve_memory
+    asyncio.run(serve_memory())
+
+
 # --------------------------------------------------------------------------- #
 #  agentify                                                                    #
 # --------------------------------------------------------------------------- #
