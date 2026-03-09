@@ -55,8 +55,8 @@ _TOOLS = [
                 "level": {
                     "type": "string",
                     "enum": ["index", "summary", "detail", "full"],
-                    "default": "summary",
-                    "description": "How much detail to include. summary (~200 tokens) is usually enough."
+                    "default": "detail",
+                    "description": "How much detail to include. detail (~500 tokens) is the default for AI agents; summary (~200 tokens) for quick checks."
                 }
             }
         }
@@ -165,7 +165,7 @@ async def _handle_get_session_context(params: dict) -> str:
     if not session:
         return "No active session. Start one with save_checkpoint(goal='...')."
 
-    level = params.get("level", "summary")
+    level = params.get("level", "detail")  # default: detail for AI agents
     if level == "full":
         return json.dumps(session, indent=2)
 
@@ -213,6 +213,47 @@ async def _handle_store_learning(params: dict) -> str:
     return f"Stored learning: {finding[:80]}{'...' if len(finding) > 80 else ''}"
 
 
+def _apply_recency_scoring(results: list) -> list:
+    """
+    Re-rank results by blending original relevance rank with recency.
+    Fresher learnings get a boost: score = rank_penalty + recency_bonus.
+    Items within 24h get max boost; decay over 7 days to zero.
+    """
+    from datetime import datetime, timezone
+    import math
+
+    now = datetime.now(timezone.utc)
+    scored = []
+    for rank, r in enumerate(results):
+        # Base score from rank (lower rank = better relevance)
+        rank_score = 1.0 / (rank + 1)
+
+        # Recency boost: 0.0 → 1.0, decaying over 7 days
+        recency_boost = 0.0
+        ts = r.get("timestamp")
+        if ts:
+            try:
+                dt = datetime.fromisoformat(ts)
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=timezone.utc)
+                age_hours = (now - dt).total_seconds() / 3600
+                # Exponential decay: full boost at 0h, ~0 at 168h (7 days)
+                recency_boost = math.exp(-age_hours / 48)  # half-life = 48h
+            except Exception:
+                pass
+
+        # Confidence boost
+        conf_boost = {"confirmed": 0.2, "likely": 0.1, "hypothesis": 0.0}.get(
+            r.get("confidence", "confirmed"), 0.0
+        )
+
+        final_score = rank_score + (0.4 * recency_boost) + conf_boost
+        scored.append((final_score, r))
+
+    scored.sort(key=lambda x: x[0], reverse=True)
+    return [r for _, r in scored]
+
+
 async def _handle_recall_learnings(params: dict) -> str:
     from agora_code.vector_store import get_store
     from agora_code.embeddings import get_embedding, is_available
@@ -224,11 +265,14 @@ async def _handle_recall_learnings(params: dict) -> str:
     if is_available():
         emb = get_embedding(query)
         if emb:
-            results = store.search_learnings_semantic(emb, limit=limit)
+            results = store.search_learnings_semantic(emb, limit=limit * 2)  # fetch more for re-ranking
         else:
-            results = store.search_learnings_keyword(query, limit=limit)
+            results = store.search_learnings_keyword(query, limit=limit * 2)
     else:
-        results = store.search_learnings_keyword(query, limit=limit)
+        results = store.search_learnings_keyword(query, limit=limit * 2)
+
+    # Apply recency + confidence re-ranking, then trim to limit
+    results = _apply_recency_scoring(results)[:limit]
 
     if not results:
         return f"No learnings found for '{query}'. Store one with store_learning()."
