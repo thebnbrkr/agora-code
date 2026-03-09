@@ -1,18 +1,22 @@
 """
 extractors/llm.py — Tier 3: LLM-based extractor.
 
-Works for any language, any framework.
+Only relevant when using the agora-code CLI directly.
+When used as an MCP server with Claude Code / Cline / Cursor, Tier 3 is
+not called — the coding agent is itself the LLM and understands the code.
 
 Provider auto-detection (from env vars, in priority order):
-  ANTHROPIC_API_KEY  →  claude-3-5-haiku-20241022  (fast, cheap)
-  OPENAI_API_KEY     →  gpt-4o-mini
-  GEMINI_API_KEY     →  gemini-1.5-flash
+  ANTHROPIC_API_KEY  →  see DEFAULT_MODELS["claude"]
+  OPENAI_API_KEY     →  see DEFAULT_MODELS["openai"]
+  GEMINI_API_KEY     →  see DEFAULT_MODELS["gemini"]
 
-Override:
-  LLM_PROVIDER=openai  (or "claude", "gemini")
-  LLM_MODEL=gpt-4o
+Override model:
+  LLM_MODEL=claude-opus-4-5        ← any valid model name
+  --llm-model claude-opus-4-5      ← CLI flag
 
-  Or pass provider= / model= directly to extract().
+Override provider:
+  LLM_PROVIDER=openai              ← env var
+  --llm-provider openai            ← CLI flag
 """
 
 from __future__ import annotations
@@ -23,6 +27,14 @@ from pathlib import Path
 from typing import List, Optional
 
 from agora_code.models import Param, Route, RouteCatalog
+
+# ─── Update these when new models release ─────────────────────────────────────
+DEFAULT_MODELS = {
+    "claude": "claude-haiku-4-5",          # fast + cheap, good at structured JSON
+    "openai": "gpt-4o-mini",               # good balance of speed/cost
+    "gemini": "gemini-2.0-flash",          # fast, generous free tier
+}
+# ─────────────────────────────────────────────────────────────────
 
 # Retry logic (optional dependency)
 try:
@@ -82,26 +94,26 @@ Rules:
 def _detect_provider() -> tuple[str, str]:
     """
     Auto-detect LLM provider from environment.
-    Returns (provider_name, default_model).
+    Returns (provider_name, model_to_use).
     """
-    env_override = os.environ.get("LLM_PROVIDER", "").lower()
+    env_provider = os.environ.get("LLM_PROVIDER", "").lower()
     env_model    = os.environ.get("LLM_MODEL", "")
 
-    # Explicit override takes priority
-    if env_override in ("claude", "anthropic"):
-        return "claude", env_model or "claude-3-5-haiku-20241022"
-    if env_override == "openai":
-        return "openai", env_model or "gpt-4o-mini"
-    if env_override == "gemini":
-        return "gemini",  env_model or "gemini-1.5-flash"
+    # Explicit provider override takes priority
+    if env_provider in ("claude", "anthropic"):
+        return "claude", env_model or DEFAULT_MODELS["claude"]
+    if env_provider == "openai":
+        return "openai", env_model or DEFAULT_MODELS["openai"]
+    if env_provider == "gemini":
+        return "gemini", env_model or DEFAULT_MODELS["gemini"]
 
     # Auto-detect from API keys
     if os.environ.get("ANTHROPIC_API_KEY"):
-        return "claude", env_model or "claude-3-5-haiku-20241022"
+        return "claude", env_model or DEFAULT_MODELS["claude"]
     if os.environ.get("OPENAI_API_KEY"):
-        return "openai", env_model or "gpt-4o-mini"
+        return "openai", env_model or DEFAULT_MODELS["openai"]
     if os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY"):
-        return "gemini", env_model or "gemini-1.5-flash"
+        return "gemini", env_model or DEFAULT_MODELS["gemini"]
 
     return "", ""   # no provider available
 
@@ -170,12 +182,13 @@ async def extract(
 
 def _get_llm(provider: str, model: Optional[str] = None):
     provider = provider.lower()
+    model = model or DEFAULT_MODELS.get(provider)
     if provider in ("claude", "anthropic"):
-        return _make_claude_llm(model or "claude-3-5-haiku-20241022")
+        return _make_claude_llm(model)
     elif provider == "openai":
-        return _make_openai_llm(model or "gpt-4o-mini")
+        return _make_openai_llm(model)
     elif provider == "gemini":
-        return _make_gemini_llm(model or "gemini-1.5-flash")
+        return _make_gemini_llm(model)
     else:
         raise ValueError(
             f"Unknown LLM provider: {provider!r}. "
