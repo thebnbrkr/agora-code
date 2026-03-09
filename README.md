@@ -16,6 +16,7 @@ Works standalone as a CLI tool, or as an MCP server inside Claude Desktop, Cline
 
 - [Installation](#installation)
 - [Quick Start (5 minutes)](#quick-start)
+- [Daily Coding Companion (memory-server)](#daily-coding-companion)
 - [Session Memory](#session-memory--context-compression)
 - [Workflow Builder (agentify)](#workflow-builder)
 - [MCP Server Setup](#mcp-server-setup)
@@ -174,6 +175,75 @@ Instead of dumping thousands of tokens into context:
 | `full` | Raw JSON (no compression) | 3,000+ |
 
 `inject` auto-picks the richest level that fits your token budget (default 2,000 tokens).
+
+---
+
+## Daily Coding Companion
+
+The fastest way to use agora-code with any AI assistant — no project path, no running API needed. Just persistent memory across all your coding sessions.
+
+**One session = one task/goal**, not one message. It spans multiple conversations until you call `complete_session`.
+
+### Add to Antigravity / Claude Desktop
+
+```bash
+which agora-code   # find your path, e.g. /usr/local/bin/agora-code
+```
+
+Add to MCP config (Antigravity: Agent panel → MCP Servers → Manage → View raw config):
+```json
+{
+  "mcpServers": {
+    "agora-memory": {
+      "command": "/usr/local/bin/agora-code",
+      "args": ["memory-server"]
+    }
+  }
+}
+```
+
+If installed in a venv:
+```json
+{
+  "mcpServers": {
+    "agora-memory": {
+      "command": "python3",
+      "args": ["-m", "agora_code.cli", "memory-server"]
+    }
+  }
+}
+```
+
+Restart Antigravity. The AI now has 6 memory tools:
+
+| Tool | What it does |
+|---|---|
+| `get_session_context` | AI auto-reads on startup — knows what you were working on |
+| `save_checkpoint` | Saves goal, hypothesis, files changed |
+| `store_learning` | Stores permanent findings across all projects |
+| `recall_learnings` | Searches past findings (semantic if API key set) |
+| `complete_session` | Archives session when task is done |
+| `get_memory_stats` | Storage stats |
+
+### What gets stored
+
+**`.agora-code/session.json`** — active session, project-local, gitignored:
+```json
+{
+  "goal": "Refactor auth module",
+  "hypothesis": "SessionManager needs a lock",
+  "files_changed": [{"file": "auth.py", "what": "added retry logic"}],
+  "next_steps": ["Write edge case test"],
+  "discoveries": [{"finding": "validate() not thread-safe", "confidence": "confirmed"}]
+}
+```
+
+**`~/.agora-code/memory.db`** — global SQLite, permanent learnings across all projects:
+```
+finding                           | tags          | confidence
+POST /users rejects + in emails   | auth,email    | confirmed
+Rate limit: 100 req/min           | rate-limit    | confirmed
+```
 
 ---
 
@@ -341,9 +411,10 @@ You never need to specify which tier to use — it's automatic.
 
 ```
 agora-code scan <target>          Scan a codebase or API URL
-agora-code serve <target>         Start MCP server (for Claude/Cline/Cursor/Antigravity)
+agora-code serve <target>         Start MCP server (exposes API routes as tools)
+agora-code memory-server          Start MCP server for session memory (no project needed)
 agora-code agentify <target>      Auto-detect workflows, generate Agora AsyncFlow code
-agora-code chat <target>          Chat with your API directly (no MCP client needed)
+agora-code chat <target>          Chat with your API directly
 agora-code auth <target>          Set up authentication for API calls
 
 agora-code checkpoint             Save session state
@@ -364,7 +435,8 @@ agora-code recall "<query>"       Search your knowledge base
 agora-code/
 ├── agora_code/
 │   ├── scanner.py          4-tier pipeline orchestrator
-│   ├── agent.py            MCP server (JSON-RPC 2.0 over stdio)
+│   ├── agent.py            MCP server for API routes (JSON-RPC 2.0 over stdio)
+│   ├── memory_server.py    MCP server for session memory (project-agnostic)
 │   ├── cli.py              All CLI commands
 │   ├── workflows.py        Workflow detection + Agora AsyncFlow builder
 │   ├── session.py          JSON session lifecycle manager
