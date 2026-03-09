@@ -713,8 +713,100 @@ def recall(query, limit):
 
 
 # --------------------------------------------------------------------------- #
-#  Helpers                                                                     #
+#  agentify                                                                    #
 # --------------------------------------------------------------------------- #
+
+@main.command()
+@click.argument("target")
+@click.option("--llm-provider", default="auto", type=click.Choice(["auto", "claude", "openai", "gemini"]))
+@click.option("--llm-model", default=None, help="Override default model for workflow detection")
+@click.option("--output", "-o", default=None, help="Directory to save generated flow code")
+@click.option("--show-mermaid", is_flag=True, default=False, help="Print Mermaid DAG diagram")
+def agentify(target, llm_provider, llm_model, output, show_mermaid):
+    """Scan a repo and auto-generate workflows from its API routes.
+
+    \b
+    agora-code agentify ./my-api
+    agora-code agentify ./my-api --output ./workflows --show-mermaid
+    agora-code agentify https://api.example.com --llm-provider claude
+    """
+    from agora_code.scanner import scan as do_scan
+    from agora_code.workflows import detect_workflows, generate_flow_code
+
+    _echo(f"🔍 Scanning {target!r}...")
+    catalog = asyncio.run(do_scan(target))
+
+    if len(catalog) == 0:
+        _echo("⚠️  No routes found — try --use-llm or point at an OpenAPI URL.")
+        return
+
+    _echo(f"✅ {len(catalog)} routes found via {catalog.extractor} extractor")
+    _echo(f"🤖 Detecting workflows with LLM ({llm_provider})...\n")
+
+    try:
+        workflow_catalog = asyncio.run(
+            detect_workflows(catalog, provider=llm_provider, model=llm_model)
+        )
+    except RuntimeError as e:
+        _echo(f"❌ {e}")
+        _echo("\nTo detect workflows, set one of:")
+        _echo("  ANTHROPIC_API_KEY  (Claude — recommended)")
+        _echo("  OPENAI_API_KEY     (GPT-4o-mini)")
+        _echo("  GEMINI_API_KEY     (Gemini Flash)")
+        return
+
+    if len(workflow_catalog) == 0:
+        _echo("📭 No multi-step workflows detected.")
+        _echo("   This may mean the routes are all independent endpoints.")
+        return
+
+    _echo(f"✅ {len(workflow_catalog)} workflow(s) detected:\n")
+
+    for wf in workflow_catalog.workflows:
+        _echo(f"  ◆  {wf.name}")
+        _echo(f"     {wf.description}")
+        _echo(f"     Steps: {' → '.join(f'{s.route_method} {s.route_path}' for s in wf.steps)}")
+        if wf.trigger_keywords:
+            _echo(f"     Triggers: {', '.join(wf.trigger_keywords)}")
+        _echo("")
+
+    # Show Mermaid DAG
+    if show_mermaid:
+        _echo("─" * 60)
+        _echo("📊 DAG (Mermaid):\n")
+        for wf in workflow_catalog.workflows:
+            _echo(f"  # {wf.name}")
+            _echo("  graph TD")
+            for i, step in enumerate(wf.steps[:-1]):
+                a = step.route_path.replace("/", "_").replace("{", "").replace("}", "")
+                b = wf.steps[i+1].route_path.replace("/", "_").replace("{", "").replace("}", "")
+                _echo(f"      {step.route_method}{a} --> {wf.steps[i+1].route_method}{b}")
+            _echo("")
+
+    # Save generated code
+    if output:
+        import os
+        os.makedirs(output, exist_ok=True)
+
+        # Save workflow catalog JSON
+        json_path = os.path.join(output, "workflows.json")
+        with open(json_path, "w") as f:
+            f.write(workflow_catalog.to_json())
+        _echo(f"💾 Workflow catalog saved to {json_path}")
+
+        # Save individual flow Python files
+        for wf in workflow_catalog.workflows:
+            code = generate_flow_code(wf, base_url="http://localhost:8000")
+            code_path = os.path.join(output, f"{wf.name}.py")
+            with open(code_path, "w") as f:
+                f.write(code)
+            _echo(f"   Generated: {code_path}")
+
+        _echo(f"\n✅ Edit the generated files, then run: python {wf.name}.py")
+    else:
+        _echo("💡 Add --output ./workflows to save generated Python flow files.")
+
+
 
 def _echo(msg: str, err: bool = False) -> None:
     """Print with rich if available, plain otherwise."""
