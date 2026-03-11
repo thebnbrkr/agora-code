@@ -510,12 +510,13 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _slug(goal: Optional[str]) -> str:
+def _slug(goal: Optional[str], branch: Optional[str] = None) -> str:
     """Create a readable session ID like '2026-03-08-fix-post-users'."""
     date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    if not goal:
+    source = goal or branch
+    if not source:
         return f"{date}-{uuid.uuid4().hex[:6]}"
-    words = "".join(c if c.isalnum() else "-" for c in goal.lower()).strip("-")
+    words = "".join(c if c.isalnum() else "-" for c in source.lower()).strip("-")
     words = "-".join(w for w in words.split("-") if w)[:40]
     return f"{date}-{words}"
 

@@ -1,21 +1,19 @@
 {
+    "version": 1,
     "hooks": {
-        "onConversationStart": [
+        "sessionStart": [
             {
-                "command": "agora-code inject --quiet"
+                "command": ".cursor/hooks/session-start.sh"
             }
         ],
-        "onFileWrite": [
+        "afterFileEdit": [
             {
-                "command": "agora-code scan . --cache --quiet"
-            },
-            {
-                "command": "agora-code track-diff $CURSOR_TOOL_INPUT_FILE_PATH"
+                "command": ".cursor/hooks/after-file-edit.sh"
             }
         ],
-        "onContextLimit": [
+        "preCompact": [
             {
-                "command": "agora-code state save"
+                "command": ".cursor/hooks/pre-compact.sh"
             }
         ]
     }

@@ -47,7 +47,11 @@ def main():
 @click.option("--format", "fmt", default="table", type=click.Choice(["table", "json", "mcp"]),
               help="Output format")
 @click.option("--enterprise", is_flag=True, default=False, help="Enterprise edition mode")
-def scan(target, output, use_llm, llm_provider, fmt, enterprise):
+@click.option("--cache", is_flag=True, default=False,
+              help="Use cached discovered_routes.json if present (skip re-scanning)")
+@click.option("--quiet", is_flag=True, default=False,
+              help="Suppress output — for hook/automation use")
+def scan(target, output, use_llm, llm_provider, fmt, enterprise, cache, quiet):
     """Scan a codebase or URL and discover all API routes.
 
     TARGET can be a local directory path or a remote URL:
@@ -57,10 +61,27 @@ def scan(target, output, use_llm, llm_provider, fmt, enterprise):
     agora-code scan https://api.example.com
     agora-code scan ./my-app --output routes.json
     agora-code scan ./node-app --use-llm
+    agora-code scan . --cache --quiet        # hook-safe: uses cache, no output
     """
     from agora_code.scanner import scan as do_scan
 
-    _echo(f"🔍 Scanning {target!r}...")
+    # --cache: load discovered_routes.json from cwd if it exists
+    if cache:
+        cache_file = Path("discovered_routes.json")
+        if cache_file.exists():
+            from agora_code.models import RouteCatalog
+            try:
+                catalog = RouteCatalog.from_json(cache_file.read_text(encoding="utf-8"))
+                if not quiet:
+                    _echo(f"✅ Loaded {len(catalog)} cached routes from {cache_file}")
+                if output:
+                    Path(output).write_text(catalog.to_json(), encoding="utf-8")
+                return
+            except Exception:
+                pass  # cache unreadable — fall through to live scan
+
+    if not quiet:
+        _echo(f"🔍 Scanning {target!r}...")
 
     catalog = asyncio.run(do_scan(
         target,
@@ -70,23 +91,28 @@ def scan(target, output, use_llm, llm_provider, fmt, enterprise):
     ))
 
     if len(catalog) == 0:
-        _echo("⚠️  No routes found. Try --use-llm for non-Python/non-OpenAPI repos.")
+        if not quiet:
+            _echo("⚠️  No routes found. Try --use-llm for non-Python/non-OpenAPI repos.")
         return
 
-    _echo(f"✅ Found {len(catalog)} routes via {catalog.extractor} extractor\n")
+    if not quiet:
+        _echo(f"✅ Found {len(catalog)} routes via {catalog.extractor} extractor\n")
 
-    if fmt == "json":
-        click.echo(catalog.to_json())
-    elif fmt == "mcp":
-        click.echo(json.dumps(catalog.to_mcp_tools(), indent=2))
-    else:
-        _print_routes_table(catalog)
+    if not quiet:
+        if fmt == "json":
+            click.echo(catalog.to_json())
+        elif fmt == "mcp":
+            click.echo(json.dumps(catalog.to_mcp_tools(), indent=2))
+        else:
+            _print_routes_table(catalog)
 
     if output:
         Path(output).write_text(catalog.to_json(), encoding="utf-8")
-        _echo(f"\n💾 Saved to {output}")
+        if not quiet:
+            _echo(f"\n💾 Saved to {output}")
 
-    _echo(f"\nNext step:  agora-code serve {target}")
+    if not quiet:
+        _echo(f"\nNext step:  agora-code serve {target}")
 
 
 # --------------------------------------------------------------------------- #
@@ -425,7 +451,9 @@ def status():
 @click.option("--blocker", default=None, multiple=True, help="Blockers (repeatable)")
 @click.option("--file", "file_changed", default=None, multiple=True,
               help="File you changed, optionally with note: 'auth.py:added retry logic'")
-def checkpoint(goal, hypothesis, action, context, api, next_step, blocker, file_changed):
+@click.option("--quiet", is_flag=True, default=False,
+              help="Suppress output — for hook/automation use")
+def checkpoint(goal, hypothesis, action, context, api, next_step, blocker, file_changed, quiet):
     """Save current session state to .agora-code/session.json.
 
     \b
@@ -458,8 +486,9 @@ def checkpoint(goal, hypothesis, action, context, api, next_step, blocker, file_
         updates["files_changed"] = files
 
     session = update_session(updates)
-    _echo(f"✅ Session saved: {session['session_id']}")
-    _echo(f"   Goal: {session.get('goal') or '(none)'} | Status: {session.get('status', 'in_progress')}")
+    if not quiet:
+        _echo(f"✅ Session saved: {session['session_id']}")
+        _echo(f"   Goal: {session.get('goal') or '(none)'} | Status: {session.get('status', 'in_progress')}")
 
 
 # --------------------------------------------------------------------------- #
@@ -496,7 +525,9 @@ def complete(summary, outcome):
               help="Compression level (default: summary ~200 tokens)")
 @click.option("--token-budget", default=2000, help="Max tokens for auto-level picking")
 @click.option("--raw", is_flag=True, default=False, help="Print raw session JSON")
-def inject(level, token_budget, raw):
+@click.option("--quiet", is_flag=True, default=False,
+              help="Exit silently if no session exists (for hook use)")
+def inject(level, token_budget, raw, quiet):
     """Print compressed session context for injection into any coding agent.
 
     \b

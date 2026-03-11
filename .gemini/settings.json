@@ -2,29 +2,19 @@
     "hooks": {
         "SessionStart": [
             {
-                "matcher": "",
-                "hooks": [
-                    {
-                        "type": "command",
-                        "command": "agora-code inject --quiet"
-                    }
-                ]
+                "type": "command",
+                "command": "agora-code inject --quiet || exit 0"
             }
         ],
         "PreCompact": [
             {
-                "matcher": "",
-                "hooks": [
-                    {
-                        "type": "command",
-                        "command": "agora-code state save"
-                    }
-                ]
+                "type": "command",
+                "command": "agora-code checkpoint --quiet"
             }
         ],
         "PostToolUse": [
             {
-                "matcher": "Write|Edit|MultiEdit|write_file|edit_file",
+                "matcher": "Write|Edit|MultiEdit|write_file|replace|edit_file",
                 "hooks": [
                     {
                         "type": "command",
