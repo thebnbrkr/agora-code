@@ -102,11 +102,8 @@ def scan(target, output, use_llm, llm_provider, fmt, enterprise):
               help="Bearer token (or set AGORA_AUTH_TOKEN env var)")
 @click.option("--auth-type", default="bearer",
               type=click.Choice(["bearer", "api-key", "basic", "none"]))
-@click.option("--memory/--no-memory", default=True, help="Enable agora-mem memory layer")
-@click.option("--db-path", default="./agora_agent_memory.db",
-              help="SQLite path for memory (community edition)")
 @click.option("--enterprise", is_flag=True, default=False)
-def serve(target, url, use_llm, llm_provider, auth_token, auth_type, memory, db_path, enterprise):
+def serve(target, url, use_llm, llm_provider, auth_token, auth_type, enterprise):
     """Start an MCP server for your API — plug into Claude Desktop or Cursor.
 
     \b
@@ -142,42 +139,16 @@ def serve(target, url, use_llm, llm_provider, auth_token, auth_type, memory, db_
     elif auth_type != "none":
         _echo("⚠️  No auth token set. Set AGORA_AUTH_TOKEN or pass --auth-token", err=True)
 
-    # Memory (optional - only if agora-mem is installed)
-    agent_memory = None
-    if memory:
-        try:
-            from agora_mem import MemoryStore
-            from agora_code.memory_layer import AgentMemory
-            store = MemoryStore(storage="sqlite", db_path=db_path)
-            agent_memory = AgentMemory(store)
-            _echo(f"🧠 Memory enabled (SQLite: {db_path})", err=True)
-        except ImportError:
-            _echo("⚠️  agora-mem not installed — running without memory. "
-                  "pip install agora-code[memory]", err=True)
+    server = MCPServer(
+        catalog=catalog,
+        base_url=url,
+        auth=auth,
+        edition="enterprise" if enterprise else "community",
+    )
 
-    #  FIX: Only pass memory if MCPServer supports it
-    # Check if MCPServer accepts memory parameter
-    from inspect import signature
-    mcp_params = signature(MCPServer.__init__).parameters
-    
-    if 'memory' in mcp_params and agent_memory is not None:
-        server = MCPServer(
-            catalog=catalog,
-            base_url=url,
-            memory=agent_memory,
-            auth=auth,
-            edition="enterprise" if enterprise else "community",
-        )
-    else:
-        # Memory not supported yet or not available
-        server = MCPServer(
-            catalog=catalog,
-            base_url=url,
-            auth=auth,
-            edition="enterprise" if enterprise else "community",
-        )
-
-    _echo(f"🚀 MCP server ready ({len(catalog)} tools)", err=True)
+    from agora_code.vector_store import get_store
+    db = get_store()
+    _echo(f"🚀 MCP server ready ({len(catalog)} tools) — memory: {db.db_path}", err=True)
     asyncio.run(server.serve())
 
 
@@ -187,35 +158,29 @@ def serve(target, url, use_llm, llm_provider, auth_token, auth_type, memory, db_
 
 @main.command()
 @click.argument("target")
-@click.option("--db-path", default="./agora_agent_memory.db")
 @click.option("--window", default=24, help="Time window in hours for pattern detection")
-def stats(target, db_path, window):
+def stats(target, window):
     """Show API call stats and patterns from memory.
 
     \b
     agora-code stats ./my-api
     agora-code stats ./my-api --window 48
     """
-    try:
-        from agora_mem import MemoryStore
-        from agora_code.memory_layer import AgentMemory
-    except ImportError:
-        _echo("❌ agora-mem not installed. Run: pip install agora-code[memory]")
-        sys.exit(1)
-
-    store = MemoryStore(storage="sqlite", db_path=db_path)
-    memory = AgentMemory(store)
+    from agora_code.vector_store import get_store
 
     async def _run():
         from agora_code.scanner import scan as do_scan
         catalog = await do_scan(target)
+        store = get_store()
 
-        _echo(f"\n📊 API Stats — {target}\n")
+        _echo(f"\n📊 API Stats — {target}  (DB: {store.db_path})\n")
 
+        any_calls = False
         for route in catalog.routes[:20]:
-            s = await memory.get_endpoint_stats(route.method, route.path)
+            s = store.get_endpoint_stats(route.method, route.path)
             if s["total_calls"] == 0:
                 continue
+            any_calls = True
             success_pct = int(s["success_rate"] * 100) if s["success_rate"] else 0
             latency = f"{s['avg_latency_ms']:.0f}ms" if s["avg_latency_ms"] else "—"
             _echo(
@@ -225,10 +190,14 @@ def stats(target, db_path, window):
                 f"{latency}"
             )
 
-        _echo("\n🔍 Patterns detected:\n")
-        patterns = await memory.detect_patterns(time_window_hours=window)
-        for p in patterns:
-            _echo(f"  {p}")
+        if not any_calls:
+            _echo("  No API calls logged yet. Run agora-code serve to start tracking.")
+
+        _echo("\n🔍 Failure patterns:\n")
+        for route in catalog.routes[:20]:
+            patterns = store.get_failure_patterns(route.path)
+            for p in patterns:
+                _echo(f"  ⚠️  {route.path}: {p['occurrences']} failures with params {p['params']}")
 
     asyncio.run(_run())
 
@@ -410,8 +379,7 @@ def chat(target, url, use_llm, level, auth_token, auth_type):
 # --------------------------------------------------------------------------- #
 
 @main.command()
-@click.option("--db-path", default="./agora_agent_memory.db")
-def status(db_path):
+def status():
     """Show current session state and recent call stats.
 
     \b
@@ -419,6 +387,7 @@ def status(db_path):
     """
     from agora_code.session import load_session
     from agora_code.tldr import compress_session, estimate_tokens
+    from agora_code.vector_store import get_store
 
     session = load_session()
     if not session:
@@ -430,16 +399,12 @@ def status(db_path):
         _echo("═" * 60)
         _echo(compress_session(session, level="detail"))
 
-    # Also show VectorStore stats if available
-    try:
-        from agora_code.vector_store import get_store
-        stats = get_store().get_stats()
-        _echo(f"\n🧠 Memory: {stats['sessions']} sessions, "
-              f"{stats['learnings']} learnings, "
-              f"{stats['api_calls']} API calls logged"
-              f"  [vector search: {'on' if stats['vector_search'] else 'off (install sqlite-vec)'}]")
-    except Exception:
-        pass
+    stats = get_store().get_stats()
+    _echo(f"\n🧠 Memory: {stats['sessions']} sessions, "
+          f"{stats['learnings']} learnings, "
+          f"{stats['api_calls']} API calls logged"
+          f"  [DB: {stats['db_path']}]"
+          f"  [vector search: {'on' if stats['vector_search'] else 'off (install sqlite-vec)'}]")
 
 
 # --------------------------------------------------------------------------- #
