@@ -1,0 +1,41 @@
+{
+    "hooks": {
+        "SessionStart": [
+            {
+                "matcher": "",
+                "hooks": [
+                    {
+                        "type": "command",
+                        "command": "agora-code inject --quiet"
+                    }
+                ]
+            }
+        ],
+        "PreCompact": [
+            {
+                "matcher": "",
+                "hooks": [
+                    {
+                        "type": "command",
+                        "command": "agora-code state save"
+                    }
+                ]
+            }
+        ],
+        "PostToolUse": [
+            {
+                "matcher": "Write|Edit|MultiEdit|write_file|edit_file",
+                "hooks": [
+                    {
+                        "type": "command",
+                        "command": "agora-code scan . --cache --quiet"
+                    },
+                    {
+                        "type": "command",
+                        "command": "agora-code track-diff $GEMINI_TOOL_INPUT_FILE_PATH"
+                    }
+                ]
+            }
+        ]
+    }
+}

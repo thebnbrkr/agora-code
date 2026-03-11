@@ -1,0 +1,22 @@
+{
+    "hooks": {
+        "onConversationStart": [
+            {
+                "command": "agora-code inject --quiet"
+            }
+        ],
+        "onFileWrite": [
+            {
+                "command": "agora-code scan . --cache --quiet"
+            },
+            {
+                "command": "agora-code track-diff $CURSOR_TOOL_INPUT_FILE_PATH"
+            }
+        ],
+        "onContextLimit": [
+            {
+                "command": "agora-code state save"
+            }
+        ]
+    }
+}

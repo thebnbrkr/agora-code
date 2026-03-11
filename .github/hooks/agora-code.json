@@ -1,0 +1,10 @@
+{
+    "hooks": {
+        "session_start": "agora-code inject --quiet",
+        "file_write": [
+            "agora-code scan . --cache --quiet",
+            "agora-code track-diff $COPILOT_TOOL_INPUT_FILE_PATH"
+        ],
+        "pre_compact": "agora-code state save"
+    }
+}
