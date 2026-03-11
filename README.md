@@ -590,8 +590,11 @@ agora-code restore <session_id>    Restore specific session as active
 agora-code track-diff <file>       Capture git diff for a file → store summary
   --committed                      Diff vs HEAD~1 instead of working tree
 
-agora-code file-history <file>     View change log for a file
+agora-code file-history <file>     View change log for a file (with author attribution)
   --limit 20
+
+agora-code install-hooks           Install git post-commit hook (fires on every commit)
+  --force                          Overwrite existing hook
 
 agora-code memory-server           Start project-agnostic MCP memory server
 ```
