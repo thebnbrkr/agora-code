@@ -63,15 +63,15 @@ At session start, the AI calls `get_session_context` → reads a compressed summ
 ## Installation
 
 ```bash
-pip install agora-code
+pip install git+https://github.com/thebnbrkr/agora-code
 ```
 
-Optional extras for semantic search and LLM features:
+Optional extras:
 ```bash
-pip install agora-code[memory]   # sqlite-vec for semantic recall
-pip install agora-code[claude]   # Anthropic SDK (workflow detection, LLM scan)
-pip install "agora-code[openai]" # OpenAI SDK
-pip install agora-code[gemini]   # Gemini SDK
+pip install "git+https://github.com/thebnbrkr/agora-code[memory]"   # sqlite-vec for semantic recall
+pip install "git+https://github.com/thebnbrkr/agora-code[claude]"   # Anthropic SDK
+pip install "git+https://github.com/thebnbrkr/agora-code[openai]"   # OpenAI SDK
+pip install "git+https://github.com/thebnbrkr/agora-code[gemini]"   # Gemini SDK
 ```
 
 Find the installed path:
