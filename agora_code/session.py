@@ -173,6 +173,27 @@ def _get_commit_sha() -> Optional[str]:
         return None
 
 
+def _get_git_author() -> Optional[str]:
+    """
+    Return the current git user identity (user.name + user.email) for
+    attribution on file changes and checkpoints. Works for humans and agents.
+    """
+    try:
+        name = subprocess.run(
+            ["git", "config", "user.name"],
+            capture_output=True, text=True, timeout=5,
+        ).stdout.strip()
+        email = subprocess.run(
+            ["git", "config", "user.email"],
+            capture_output=True, text=True, timeout=5,
+        ).stdout.strip()
+        if name and email:
+            return f"{name} <{email}>"
+        return name or email or None
+    except Exception:
+        return None
+
+
 def _extract_ticket(branch: Optional[str]) -> Optional[str]:
     """
     Extract a ticket/issue number from a branch name.

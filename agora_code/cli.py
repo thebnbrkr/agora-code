@@ -760,11 +760,12 @@ def track_diff(file_path, committed):
         except Exception:
             return
 
-    # Generate compact summary from diff (no LLM needed — heuristic)
+    # Generate content-aware summary from diff
     summary = _summarize_diff(raw_diff, file_path)
 
     session = load_session()
     store = get_store()
+    from agora_code.session import _get_git_author
     store.save_file_change(
         file_path=file_path,
         diff_summary=summary,
@@ -772,38 +773,90 @@ def track_diff(file_path, committed):
         commit_sha=_get_commit_sha(),
         session_id=session.get("session_id") if session else None,
         branch=_get_git_branch(),
+        agent_id=_get_git_author(),   # git config user.name <email>
     )
     _echo(f"📌 Tracked: {file_path} — {summary}")
 
 
+
 def _summarize_diff(diff: str, file_path: str) -> str:
     """
-    Heuristic diff summarizer — no LLM, fast, cheap.
-    Counts added/removed lines and extracts function/class names touched.
+    Content-aware diff summarizer.
+    Reads the actual added/removed lines to produce a meaningful
+    1-2 sentence description, not just a line count.
     """
     import re
     lines = diff.splitlines()
-    added = [l[1:] for l in lines if l.startswith("+") and not l.startswith("+++")]
-    removed = [l[1:] for l in lines if l.startswith("-") and not l.startswith("---")]
+    added   = [l[1:].strip() for l in lines if l.startswith("+") and not l.startswith("+++")]
+    removed = [l[1:].strip() for l in lines if l.startswith("-") and not l.startswith("---")]
 
-    # Find touched function/class names
-    fn_pattern = re.compile(r"(?:def |class |async def )(\w+)")
-    touched_fns = []
-    for line in added + removed:
-        for m in fn_pattern.finditer(line):
+    if not added and not removed:
+        return f"{file_path}: no changes detected"
+
+    # --- What functions/classes were touched ---
+    fn_re = re.compile(r"(?:def |class |async def )(\w+)")
+    added_fns, removed_fns = [], []
+    for line in added:
+        for m in fn_re.finditer(line):
             name = m.group(1)
-            if name not in touched_fns:
-                touched_fns.append(name)
+            if name not in added_fns:
+                added_fns.append(name)
+    for line in removed:
+        for m in fn_re.finditer(line):
+            name = m.group(1)
+            if name not in removed_fns:
+                removed_fns.append(name)
 
+    # --- What imports changed ---
+    new_imports = [l for l in added if l.startswith(("import ", "from "))]
+    del_imports = [l for l in removed if l.startswith(("import ", "from "))]
+
+    # --- Meaningful added snippets (non-blank, non-comment, non-decorator) ---
+    meaningful_added = [
+        l for l in added
+        if l and not l.startswith("#") and not l.startswith("@")
+        and not l.startswith(("import ", "from ", "class ", "def ", "async def "))
+    ]
+    meaningful_removed = [
+        l for l in removed
+        if l and not l.startswith("#") and not l.startswith("@")
+        and not l.startswith(("import ", "from ", "class ", "def ", "async def "))
+    ]
+
+    # --- Build description ---
     parts = []
-    if added:
-        parts.append(f"+{len(added)} lines")
-    if removed:
-        parts.append(f"-{len(removed)} lines")
-    if touched_fns:
-        parts.append(f"in {', '.join(touched_fns[:4])}")
 
-    return f"{file_path}: {' '.join(parts)}" if parts else f"{file_path}: modified"
+    # New/modified functions
+    new_fns = [f for f in added_fns if f not in removed_fns]
+    mod_fns = [f for f in added_fns if f in removed_fns]
+    del_fns = [f for f in removed_fns if f not in added_fns]
+
+    if new_fns:
+        parts.append(f"added {', '.join(new_fns[:3])}()")
+    if mod_fns:
+        parts.append(f"modified {', '.join(mod_fns[:3])}()")
+    if del_fns:
+        parts.append(f"removed {', '.join(del_fns[:2])}()")
+
+    # Import changes
+    if new_imports:
+        import_names = [i.split()[-1] for i in new_imports[:2]]
+        parts.append(f"imported {', '.join(import_names)}")
+    if del_imports:
+        import_names = [i.split()[-1] for i in del_imports[:2]]
+        parts.append(f"removed import {', '.join(import_names)}")
+
+    # Fallback: show a snippet of the most significant added line
+    if not parts and meaningful_added:
+        snippet = meaningful_added[0][:80].rstrip()
+        parts.append(f"added: `{snippet}`")
+    elif not parts and meaningful_removed:
+        snippet = meaningful_removed[0][:80].rstrip()
+        parts.append(f"removed: `{snippet}`")
+
+    scale = f"+{len(added)}/-{len(removed)} lines"
+    desc = "; ".join(parts) if parts else "modified"
+    return f"{file_path}: {desc} ({scale})
 
 
 # --------------------------------------------------------------------------- #
@@ -825,8 +878,9 @@ def file_history(file_path, limit):
     history = get_store().get_file_history(file_path, limit=limit)
     if not history:
         _echo(f"📭 No tracked changes for '{file_path}'.")
-        _echo("   Changes are tracked automatically via PostToolUse hook.")
-        _echo(f"   Or run: agora-code track-diff {file_path}")
+        _echo("   Changes are tracked automatically via git post-commit hook.")
+        _echo("   Install with: agora-code install-hooks")
+        _echo(f"   Or run manually: agora-code track-diff {file_path}")
         return
 
     _echo(f"\n📋 Change history for {file_path} ({len(history)} entries):\n")
@@ -834,10 +888,67 @@ def file_history(file_path, limit):
         ts = entry.get("timestamp", "")[:16]
         branch = f" [{entry['branch']}]" if entry.get("branch") else ""
         sha = f" @{entry['commit_sha'][:8]}" if entry.get("commit_sha") else ""
+        author = f" by {entry['author']}" if entry.get("author") else ""
         session = f" (session: {entry['session_id'][:20]}...)" if entry.get("session_id") else ""
-        _echo(f"  {ts}{branch}{sha}")
+        _echo(f"  {ts}{branch}{sha}{author}")
         _echo(f"    {entry.get('diff_summary', '(no summary)')}{session}")
     _echo("")
+
+
+# --------------------------------------------------------------------------- #
+#  install-hooks                                                               #
+# --------------------------------------------------------------------------- #
+
+@main.command("install-hooks")
+@click.option("--force", is_flag=True, default=False, help="Overwrite existing hook")
+def install_hooks(force):
+    """Install a git post-commit hook to auto-track file changes on every commit.
+
+    \b
+    Adds .git/hooks/post-commit — fires on every commit (human or AI).
+    Captures what changed, who committed, and stores a summary per file.
+
+    agora-code install-hooks
+    agora-code install-hooks --force    # overwrite existing hook
+    """
+    import stat
+    git_hooks_dir = Path(".git/hooks")
+    if not git_hooks_dir.is_dir():
+        _echo("❌ Not a git repository (no .git/hooks found).")
+        return
+
+    hook_path = git_hooks_dir / "post-commit"
+    if hook_path.exists() and not force:
+        _echo(f"⚠️  {hook_path} already exists. Use --force to overwrite.")
+        _echo("   You can manually append this to it:")
+        _echo("   agora-code track-diff --committed --all-changed")
+        return
+
+    hook_script = """#!/bin/sh
+# agora-code post-commit hook
+# Captures what changed on each commit and stores summaries in memory.
+# Installed by: agora-code install-hooks
+
+CHANGED_FILES=$(git diff-tree --no-commit-id --name-only -r HEAD 2>/dev/null)
+if [ -z "$CHANGED_FILES" ]; then
+    exit 0
+fi
+
+echo "$CHANGED_FILES" | while IFS= read -r file; do
+    if [ -f "$file" ]; then
+        agora-code track-diff "$file" --committed 2>/dev/null || true
+    fi
+done
+"""
+
+    hook_path.write_text(hook_script, encoding="utf-8")
+    # Make executable
+    hook_path.chmod(hook_path.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+
+    _echo(f"✅ Git post-commit hook installed at {hook_path}")
+    _echo("   Fires on every commit — human or AI.")
+    _echo("   Tracks: what changed, who committed, which branch, commit SHA.")
+    _echo("   View history with: agora-code file-history <file>")
 
 
 # --------------------------------------------------------------------------- #

@@ -369,13 +369,14 @@ class VectorStore:
         """Return summarized change history for a specific file, newest first."""
         rows = self._conn_().execute("""
             SELECT id, file_path, diff_summary, commit_sha, session_id,
-                   agent_id, branch, timestamp
+                   agent_id AS author, branch, timestamp
             FROM file_changes
             WHERE file_path = ?
             ORDER BY timestamp DESC
             LIMIT ?
         """, (file_path, limit)).fetchall()
         return [dict(r) for r in rows]
+
 
     # ----------------------------------------------------------------------- #
     #  Learnings                                                                #
