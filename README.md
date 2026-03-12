@@ -1,13 +1,13 @@
 # agora-code
 
-**Memory layer + API scanner for AI coding agents.**
+**Persistent memory layer + API scanner for AI coding agents.**
 
-agora-code does two main things:
+agora-code does two things:
 
-1. **Persistent session memory** — compresses and restores context so your AI assistant always knows where you left off, what you discovered, and what changed in the codebase. Spans multiple context windows, multiple days, multiple agents.
-2. **API discovery + MCP server** — scans any codebase (Python, OpenAPI spec) and exposes every endpoint as an MCP tool so an AI assistant can call your API directly.
+1. **Persistent session memory** — your AI assistant always knows where you left off, what you discovered, and what changed. Survives context window resets, new conversations, and multiple agents.
+2. **API discovery + MCP server** — scans any codebase (Python, OpenAPI spec) and exposes every endpoint as an MCP tool so an AI can call your API directly.
 
-Works with Claude Code, Cursor, Gemini CLI, Copilot CLI, Cline, and any MCP-compatible coding assistant.
+Works with **Cursor**, **Claude Code**, **Gemini CLI**, **Copilot CLI**, **Cline**, and any MCP-compatible coding assistant.
 
 ---
 
@@ -15,14 +15,16 @@ Works with Claude Code, Cursor, Gemini CLI, Copilot CLI, Cline, and any MCP-comp
 
 - [How It Works](#how-it-works)
 - [Installation](#installation)
-- [Quick Setup — Memory Server](#quick-setup--memory-server-5-minutes)
+- [Connect to MCP](#connect-to-mcp)
+- [Hook Setup By Agent](#hook-setup-by-agent)
 - [Session Lifecycle](#session-lifecycle)
 - [MCP Tools Reference](#mcp-tools-reference-10-tools)
-- [Git Integration](#git-integration)
-- [File Change Tracking](#file-change-tracking)
-- [Team Namespaces](#team-namespaces)
-- [Hook Setup By Agent](#hook-setup-by-agent)
 - [CLI Reference](#cli-reference)
+- [Embeddings — Semantic Search](#embeddings--semantic-search)
+- [Project Scoping](#project-scoping)
+- [File Change Tracking](#file-change-tracking)
+- [Git Integration](#git-integration)
+- [Team Namespaces](#team-namespaces)
 - [API Discovery + MCP Server](#api-discovery--mcp-server)
 - [Workflow Builder](#workflow-builder)
 - [Storage Architecture](#storage-architecture)
@@ -40,23 +42,43 @@ agora-code solves this with three layers:
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│  Layer 1: Session JSON (.agora-code/session.json)        │
-│  Active working memory — goal, hypothesis, discoveries   │
+│  Layer 1: .agora-code/session.json  (project-local)      │
+│  Active working memory — goal, hypothesis, discoveries.  │
 │  Auto-saved on every checkpoint. Gitignored.             │
 └─────────────────────────────────────────────────────────┘
 ┌─────────────────────────────────────────────────────────┐
-│  Layer 2: SQLite (~/.agora-code/memory.db)               │
+│  Layer 2: ~/.agora-code/memory.db  (global SQLite)       │
 │  Long-term memory — archived sessions, learnings,        │
 │  file change history. Persists across projects.          │
+│  Scoped per project via git remote URL (project_id).     │
 └─────────────────────────────────────────────────────────┘
 ┌─────────────────────────────────────────────────────────┐
-│  Layer 3: Vector/keyword search                          │
-│  Semantic recall via sqlite-vec + sentence-transformers  │
-│  Falls back to FTS5 keyword search (no API key needed).  │
+│  Layer 3: Semantic / keyword search                      │
+│  sqlite-vec for vector similarity (optional).            │
+│  FTS5/BM25 keyword search — always works, zero config.   │
+│  Local embeddings via sentence-transformers (offline).   │
 └─────────────────────────────────────────────────────────┘
 ```
 
-At session start, the AI calls `get_session_context` → reads a compressed summary (~400-600 tokens) of what you were working on → immediately knows the goal, branch, hypothesis, what you discovered, and what files changed. No reading the codebase from scratch.
+### What happens at session start
+
+```
+You open a new chat
+        ↓
+sessionStart hook fires → session-start.sh runs
+        ↓
+agora-code inject:
+  1. Reads .agora-code/session.json (current session)
+  2. If context is empty → queries ~/.agora-code/memory.db:
+       - Most recent session for this project
+       - Top stored learnings for this project
+     Writes recall summary into session.context (write-once cache)
+  3. Compresses to ~200 tokens
+  4. Returns {"additional_context": "..."} JSON to Cursor/Claude
+        ↓
+Agent already knows your goal, hypothesis, files changed, next steps.
+Zero re-explanation needed.
+```
 
 ---
 
@@ -67,39 +89,113 @@ pip install git+https://github.com/thebnbrkr/agora-code
 ```
 
 Optional extras:
+
 ```bash
-pip install "git+https://github.com/thebnbrkr/agora-code[memory]"   # sqlite-vec for semantic recall
-pip install "git+https://github.com/thebnbrkr/agora-code[claude]"   # Anthropic SDK
-pip install "git+https://github.com/thebnbrkr/agora-code[openai]"   # OpenAI SDK
-pip install "git+https://github.com/thebnbrkr/agora-code[gemini]"   # Gemini SDK
+# Local embeddings — fully offline, no API key needed
+pip install "git+https://github.com/thebnbrkr/agora-code[local]"
+
+# OpenAI embeddings
+pip install "git+https://github.com/thebnbrkr/agora-code[openai]"
+
+# Gemini embeddings + LLM scan
+pip install "git+https://github.com/thebnbrkr/agora-code[gemini]"
+
+# Everything
+pip install "git+https://github.com/thebnbrkr/agora-code[all]"
 ```
 
-Find the installed path:
+Find your binary path (needed for MCP config):
+
 ```bash
-which agora-code   # e.g. /usr/local/bin/agora-code
+which agora-code
+# e.g. /Library/Frameworks/Python.framework/Versions/3.10/bin/agora-code
 ```
 
 ---
 
-## Quick Setup — Memory Server (5 minutes)
+## Connect to MCP
 
-The memory server is a project-agnostic MCP server. No running API, no project directory needed. Just persistent memory for any coding session.
+The memory server is a project-agnostic MCP server. No running API needed. Add it to your AI assistant once and it works for every project.
 
-### Step 1 — Add to your AI assistant
+> **Use the full binary path** — most IDEs don't inherit your shell PATH when spawning MCP processes. Use the output of `which agora-code`.
 
-**Claude Desktop / Antigravity** (`~/.config/claude/config.json` or Antigravity MCP panel):
+### Cursor
+
+Go to **Settings → MCP** → click "Edit in settings.json" and add:
+
 ```json
 {
   "mcpServers": {
     "agora-memory": {
-      "command": "/usr/local/bin/agora-code",
+      "command": "/full/path/to/agora-code",
       "args": ["memory-server"]
     }
   }
 }
 ```
 
-If using a virtualenv:
+Or via Cursor's MCP panel: command = `/full/path/to/agora-code`, args = `["memory-server"]`.
+
+### Claude Desktop
+
+Edit `~/Library/Application Support/Claude/claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "agora-memory": {
+      "command": "/full/path/to/agora-code",
+      "args": ["memory-server"]
+    }
+  }
+}
+```
+
+### Claude Code (Antigravity)
+
+Edit `~/.config/claude/config.json` or use the Antigravity MCP panel:
+
+```json
+{
+  "mcpServers": {
+    "agora-memory": {
+      "command": "/full/path/to/agora-code",
+      "args": ["memory-server"]
+    }
+  }
+}
+```
+
+### Cline / Continue / any MCP client
+
+```json
+{
+  "mcpServers": {
+    "agora-memory": {
+      "command": "/full/path/to/agora-code",
+      "args": ["memory-server"]
+    }
+  }
+}
+```
+
+### Using a virtualenv
+
+If agora-code is installed in a venv:
+
+```json
+{
+  "mcpServers": {
+    "agora-memory": {
+      "command": "/path/to/venv/bin/agora-code",
+      "args": ["memory-server"]
+    }
+  }
+}
+```
+
+Or use python directly:
+
 ```json
 {
   "mcpServers": {
@@ -111,357 +207,95 @@ If using a virtualenv:
 }
 ```
 
-### Step 2 — Install hooks for auto-injection
+### Verify it's working
 
-**Claude Code** — create `.claude/hooks.json` in your project root:
-```json
-{
-  "hooks": {
-    "SessionStart": [
-      {"type": "command", "command": "agora-code inject --quiet"}
-    ],
-    "PreCompact": [
-      {"type": "command", "command": "agora-code state save"}
-    ],
-    "PostToolUse": [
-      {
-        "matcher": "Write|Edit|MultiEdit",
-        "hooks": [
-          {"type": "command", "command": "agora-code scan . --cache --quiet"},
-          {"type": "command", "command": "agora-code track-diff $CLAUDE_TOOL_INPUT_FILE_PATH"}
-        ]
-      }
-    ]
-  }
-}
-```
+Once connected, ask your AI:
 
-Now every time you start a Claude Code session, your context is automatically injected. Every file write automatically tracks what changed.
+> "What am I working on?"
 
-### Step 3 — Read SKILL.md
-
-`SKILL.md` in the project root tells the AI exactly when to use each memory tool. Include it in your `CLAUDE.md` or equivalent:
-```
-See SKILL.md for agora-memory tool usage guidelines.
-```
-
----
-
-## Session Lifecycle
-
-A **session** is a goal-oriented work period. It is NOT tied to a single chat window — it spans across context limit resets, restarts, and multiple conversations until you explicitly call `complete_session`.
-
-```
-New session starts
-      │
-      ▼
-save_checkpoint(goal="...", hypothesis="...")
-      │  ← auto-detects: git branch, commit SHA, uncommitted files
-      │  ← auto-derives: ticket number from branch name (JIRA-123, gh-456)
-      │  ← auto-derives: goal from branch name if none set
-      ▼
-.agora-code/session.json  (project-local, gitignored)
-~/.agora-code/memory.db   (dual-write, no data loss)
-      │
-      ▼  [context window fills → new chat starts]
-      │
-SessionStart hook fires
-      │
-      ▼
-agora-code inject  →  AI reads ~500 token summary
-      │  "Goal: JIRA-423: fix login [feat/login-fix]
-      │   Hypothesis: middleware rejects non-ASCII usernames
-      │   Discoveries: POST /auth returns 400 for usernames with spaces
-      │   Files changed: auth.py, middleware.py"
-      ▼
-Session continues seamlessly
-      │
-      ▼ [task done]
-      │
-complete_session(summary="Fixed login bug, deployed to staging")
-      │
-      ▼
-Session archived to SQLite — searchable forever via recall_learnings
-```
-
-### Session identity
-
-Sessions are identified by a combination of:
-- **Branch name** (primary anchor — auto-detected from `git rev-parse`)
-- **Ticket number** (auto-extracted from branch: `JIRA-423-fix-login` → `JIRA-423`)
-- **Goal** (optional human note — auto-derived from branch if not set)
-- **Timestamp** (always present)
-- **Commit SHA** (stored on every checkpoint for future rewind)
-
----
-
-## MCP Tools Reference (10 tools)
-
-The memory server exposes 10 tools to any MCP-compatible AI assistant.
-
-### `get_session_context`
-Returns compressed session state — what you were working on, what you discovered, what changed.
-
-```
-Parameters:
-  level: "index" | "summary" | "detail" | "full"  (default: "detail")
-```
-
-The AI should call this at session start. Hook-based injection (`agora-code inject`) does this automatically.
-
----
-
-### `save_checkpoint`
-Saves current state to `session.json` and archives to SQLite. Call this after completing any meaningful step.
-
-```
-Parameters:
-  goal:          string  — what you're trying to accomplish
-  hypothesis:    string  — current working theory
-  action:        string  — what you're doing right now
-  context:       string  — free-text project notes
-  files_changed: array   — [{file: "auth.py", what: "added retry logic"}]
-  next_steps:    array   — list of strings
-  blockers:      array   — list of strings
-```
-
-Auto-detected on every call (no input needed):
-- Current git branch
-- HEAD commit SHA
-- Ticket number from branch name
-- Uncommitted files from `git status`
-- Goal fallback from branch name if not set
-
----
-
-### `store_learning`
-Stores a permanent finding to the learnings table. Persists across sessions and projects.
-
-```
-Parameters:
-  finding:    string  — what was learned (required)
-  evidence:   string  — how this was discovered
-  confidence: "confirmed" | "likely" | "hypothesis"  (default: "confirmed")
-  tags:       array   — list of tag strings
-```
-
-Embeddings are stored alongside the text if an API key is configured, enabling semantic recall.
-
----
-
-### `recall_learnings`
-Searches past findings semantically (or by keyword if no embedding API key). Automatically enriched with active session context (branch, goal, current files) for more relevant results.
-
-```
-Parameters:
-  query: string  — what to search for (required)
-  limit: integer  (default: 5)
-```
-
-Results are reranked by:
-1. Semantic similarity to query
-2. Recency (newer findings ranked higher)
-3. Confidence level
-4. Branch match (+0.30 exact match, +0.15 same prefix e.g. `feat/*`)
-5. File overlap (+0.20 capped, scaled by count)
-
----
-
-### `complete_session`
-Archives the current session to long-term SQLite storage. Call when a task is fully done.
-
-```
-Parameters:
-  summary: string  — what was accomplished
-  outcome: "success" | "partial" | "abandoned"  (default: "success")
-```
-
----
-
-### `get_memory_stats`
-Returns counts of sessions, learnings, API calls, and whether vector search is active.
-
-No parameters.
-
----
-
-### `list_sessions`
-Lists past sessions with metadata. Useful for finding what was worked on before.
-
-```
-Parameters:
-  limit:  integer  (default: 20)
-  branch: string   — filter by branch name (optional)
-```
-
-Returns: session_id, started_at, last_active, status, goal, branch, commit_sha, ticket.
-
----
-
-### `store_team_learning`
-Same as `store_learning` but writes to the `team` namespace — visible to all agents and teammates sharing the same DB.
-
-```
-Parameters: (same as store_learning)
-```
-
----
-
-### `recall_team`
-Searches the shared team knowledge base.
-
-```
-Parameters:
-  query: string  (required)
-  limit: integer  (default: 5)
-```
-
----
-
-### `recall_file_history`
-Returns the tracked change history for a file — what changed, when, by which session, on which branch. Compact summaries, not raw diffs.
-
-```
-Parameters:
-  file_path: string  — relative path, e.g. "agora_code/auth.py"  (required)
-  limit:     integer  (default: 10)
-```
-
-Use this when starting work on a file to understand recent changes without reading the full file.
-
----
-
-## Git Integration
-
-agora-code automatically captures git context on every checkpoint — no manual input.
-
-### What gets auto-detected
-
-| Field | How detected | Example |
-|---|---|---|
-| `branch` | `git rev-parse --abbrev-ref HEAD` | `feat/auth-service` |
-| `commit_sha` | `git rev-parse --short=12 HEAD` | `abc123def456` |
-| `ticket` | Regex on branch name | `JIRA-423` from `JIRA-423-fix-login` |
-| `uncommitted_files` | `git status --porcelain` | `["auth.py", "middleware.py"]` |
-| `goal` (fallback) | Derived from branch | `"JIRA-423: fix login"` |
-
-### Ticket extraction patterns
-
-| Branch name | Extracted ticket |
-|---|---|
-| `JIRA-423-fix-login` | `JIRA-423` |
-| `feature/JIRA-423-login` | `JIRA-423` |
-| `fix/gh-456-null-ptr` | `GH-456` |
-| `GH-78-perf` | `GH-78` |
-| `feat/auth-service` | *(none — goal derived as "Working on feat/auth-service")* |
-
-### Recall scoring with branch context
-
-When you call `recall_learnings` on branch `feat/auth`:
-- Learnings from `feat/auth` get +0.30 score boost
-- Learnings from `feat/*` (same prefix) get +0.15 boost
-- Learnings tagged with currently-open files get up to +0.20 boost
-
-This surfaces the most relevant past work without filtering out unrelated findings entirely.
-
----
-
-## File Change Tracking
-
-Every time the AI edits a file, agora-code captures what changed via `git diff` and stores a compact summary. Over time, this builds a per-file change history you can query without reading the file.
-
-### How it works
-
-1. AI writes/edits a file → PostToolUse hook fires
-2. `agora-code track-diff <file>` runs `git diff HEAD -- <file>`
-3. Heuristic summarizer extracts: lines added/removed, functions touched
-4. Summary stored to `file_changes` table: `"+12 lines -3 lines in verify_token, get_user"`
-5. `recall_file_history("auth.py")` returns entire change log
-
-### Example output
-
-```
-$ agora-code file-history agora_code/auth.py
-
-📋 Change history for agora_code/auth.py (4 entries):
-
-  2026-03-11 [feat/auth] @abc123def456
-    agora_code/auth.py: +8 lines -2 lines in verify_token (session: 2026-03-11-feat-auth)
-
-  2026-03-10 [feat/auth]
-    agora_code/auth.py: +15 lines in get_user, validate_token (session: 2026-03-10-debug-auth)
-
-  2026-03-09 [main]
-    agora_code/auth.py: +3 lines -1 lines in verify_token (session: 2026-03-09-...)
-```
-
-### Manual tracking
-
-```bash
-# Track working-tree changes (unstaged/staged but uncommitted)
-agora-code track-diff agora_code/auth.py
-
-# Track changes vs last commit
-agora-code track-diff agora_code/auth.py --committed
-
-# View change log
-agora-code file-history agora_code/auth.py
-agora-code file-history agora_code/auth.py --limit 5
-```
-
----
-
-## Team Namespaces
-
-Multiple agents working on the same project can share a knowledge pool via the team namespace.
-
-```
-Agent A (planner)                    Agent B (coder)
-     │                                     │
-     │ store_team_learning(                │
-     │   "Rate limit on /auth:             │
-     │    100 req/min per IP"              │
-     │ )                                   │
-     │                                     │
-     └──────────── memory.db ─────────────→│
-                                           │
-                                    recall_team(
-                                      "rate limiting"
-                                    )
-                                    # finds Agent A's learning
-```
-
-### Setup for multi-agent use
-
-All agents sharing memory must point to the same DB. Set `AGORA_CODE_DB`:
-
-```bash
-export AGORA_CODE_DB=/shared/path/agora-memory.db
-agora-code memory-server
-```
-
-Or in MCP config:
-```json
-{
-  "mcpServers": {
-    "agora-memory": {
-      "command": "agora-code",
-      "args": ["memory-server"],
-      "env": {"AGORA_CODE_DB": "/shared/path/agora-memory.db"}
-    }
-  }
-}
-```
-
-Personal learnings (`store_learning`) are isolated per agent. Team learnings (`store_team_learning`) are shared across all agents in the same namespace.
+If the MCP is connected and a session exists, the agent will call `get_session_context` and return your current goal and state. No explanation from you needed.
 
 ---
 
 ## Hook Setup By Agent
 
+Hooks auto-inject context at session start, save state before context compaction, and track file changes. Set them up once per project.
+
+### Cursor
+
+Create `.cursor/hooks.json` in your project root:
+
+```json
+{
+  "version": 1,
+  "hooks": {
+    "sessionStart": [
+      {"command": ".cursor/hooks/session-start.sh"}
+    ],
+    "afterFileEdit": [
+      {"command": ".cursor/hooks/after-file-edit.sh"}
+    ],
+    "preCompact": [
+      {"command": ".cursor/hooks/pre-compact.sh"}
+    ]
+  }
+}
+```
+
+Create the three shell scripts:
+
+**`.cursor/hooks/session-start.sh`**
+```sh
+#!/bin/sh
+# Reads Cursor's JSON from stdin, injects session context as JSON output.
+# Output MUST be {"additional_context": "..."} — plain text causes a parse error.
+cat > /dev/null
+context=$(agora-code inject --quiet 2>/dev/null)
+if [ -n "$context" ]; then
+    escaped=$(printf '%s' "$context" | python3 -c "import sys,json; print(json.dumps(sys.stdin.read()))")
+    printf '{"additional_context":%s}\n' "$escaped"
+else
+    printf '{}\n'
+fi
+```
+
+**`.cursor/hooks/after-file-edit.sh`**
+```sh
+#!/bin/sh
+INPUT=$(cat)
+FILE_PATH=$(echo "$INPUT" | python3 -c "
+import sys, json
+try:
+    data = json.load(sys.stdin)
+    print(data.get('filePath', data.get('file_path', data.get('path', ''))))
+except Exception:
+    print('')
+" 2>/dev/null)
+agora-code scan . --cache --quiet 2>/dev/null || true
+if [ -n "$FILE_PATH" ]; then
+    agora-code track-diff "$FILE_PATH" 2>/dev/null || true
+fi
+exit 0
+```
+
+**`.cursor/hooks/pre-compact.sh`**
+```sh
+#!/bin/sh
+cat > /dev/null
+agora-code checkpoint --quiet
+exit 0
+```
+
+Make all scripts executable:
+```bash
+chmod +x .cursor/hooks/*.sh
+```
+
+> **Important:** Cursor requires `"version": 1` at the top of `hooks.json` or the file is silently ignored. Event names are camelCase: `sessionStart`, `afterFileEdit`, `preCompact`. Hook scripts must be separate files — inline commands are not supported.
+
 ### Claude Code
 
-File: `.claude/hooks.json`
+Create `.claude/hooks.json` in your project root:
 
 ```json
 {
@@ -470,7 +304,7 @@ File: `.claude/hooks.json`
       {"type": "command", "command": "agora-code inject --quiet"}
     ],
     "PreCompact": [
-      {"type": "command", "command": "agora-code state save"}
+      {"type": "command", "command": "agora-code checkpoint --quiet"}
     ],
     "PostToolUse": [
       {
@@ -487,20 +321,20 @@ File: `.claude/hooks.json`
 
 ### Gemini CLI
 
-File: `.gemini/settings.json`
+Create `.gemini/settings.json` in your project root:
 
 ```json
 {
   "hooks": {
     "SessionStart": [
-      {"type": "command", "command": "agora-code inject --quiet"}
+      {"type": "command", "command": "agora-code inject --quiet || exit 0"}
     ],
     "PreCompact": [
-      {"type": "command", "command": "agora-code state save"}
+      {"type": "command", "command": "agora-code checkpoint --quiet"}
     ],
     "PostToolUse": [
       {
-        "matcher": "Write|Edit|MultiEdit|write_file|edit_file",
+        "matcher": "Write|Edit|MultiEdit|write_file|replace|edit_file",
         "hooks": [
           {"type": "command", "command": "agora-code scan . --cache --quiet"},
           {"type": "command", "command": "agora-code track-diff $GEMINI_TOOL_INPUT_FILE_PATH"}
@@ -511,30 +345,9 @@ File: `.gemini/settings.json`
 }
 ```
 
-### Cursor
-
-File: `.cursor/hooks.json`
-
-```json
-{
-  "hooks": {
-    "onConversationStart": [
-      {"command": "agora-code inject --quiet"}
-    ],
-    "onFileWrite": [
-      {"command": "agora-code scan . --cache --quiet"},
-      {"command": "agora-code track-diff $CURSOR_TOOL_INPUT_FILE_PATH"}
-    ],
-    "onContextLimit": [
-      {"command": "agora-code state save"}
-    ]
-  }
-}
-```
-
 ### Copilot CLI
 
-File: `.github/hooks/agora-code.json`
+Create `.github/hooks/agora-code.json`:
 
 ```json
 {
@@ -544,125 +357,416 @@ File: `.github/hooks/agora-code.json`
       "agora-code scan . --cache --quiet",
       "agora-code track-diff $COPILOT_TOOL_INPUT_FILE_PATH"
     ],
-    "pre_compact": "agora-code state save"
+    "pre_compact": "agora-code checkpoint --quiet"
   }
 }
+```
+
+### SKILL.md — Tell the AI when to use each tool
+
+`SKILL.md` at the project root is a reference card for the AI agent. Include it in your `CLAUDE.md`, `AGENTS.md`, or equivalent system prompt file:
+
+```
+# Memory Tools
+See SKILL.md for agora-memory tool usage guidelines.
+```
+
+This tells the AI to proactively call `get_session_context` at session start, `save_checkpoint` after completing steps, and `store_learning` when it discovers something non-obvious.
+
+---
+
+## Session Lifecycle
+
+A **session** is a goal-oriented work period. It spans across context window resets, new conversations, and multiple agents — until you explicitly call `complete_session`.
+
+```
+Start of work
+      │
+      ▼
+save_checkpoint(goal="Fix POST /users 422 errors")
+      │  auto-captures: git branch, commit SHA, uncommitted files,
+      │  ticket number (JIRA-423 from feat/JIRA-423-fix-login),
+      │  goal derived from branch name if not set
+      ▼
+.agora-code/session.json   ← source of truth, project-local, gitignored
+~/.agora-code/memory.db    ← dual-write, survives process restarts
+      │
+      ▼  [context window fills]
+      │
+preCompact hook fires → agora-code checkpoint --quiet
+      │  state saved before Cursor/Claude compresses the window
+      ▼
+[new conversation]
+      │
+sessionStart hook fires → agora-code inject
+      │  1. reads session.json
+      │  2. if context empty → queries DB for past session + learnings
+      │  3. injects ~200-500 token summary into system context
+      ▼
+Agent already knows the goal, hypothesis, discoveries, next steps
+      │
+      ▼  [task complete]
+      │
+complete_session(summary="Fixed 422 — email regex was too strict")
+      │  archives to memory.db with embedding for semantic search
+      ▼
+Next session: DB recall surfaces this automatically
+```
+
+---
+
+## MCP Tools Reference (10 tools)
+
+The memory server exposes 10 tools to any MCP-compatible AI assistant.
+
+### `get_session_context`
+
+Returns compressed session state. At session start, also auto-populates context from the DB if the session is new (past session summary + top learnings for this project).
+
+```
+Parameters:
+  level: "index" | "summary" | "detail" | "full"  (default: "detail")
+```
+
+### `save_checkpoint`
+
+Saves current state to `session.json` and the SQLite DB.
+
+```
+Parameters:
+  goal:          string  — what you're trying to accomplish
+  hypothesis:    string  — current working theory
+  action:        string  — what you're doing right now
+  context:       string  — free-text project notes
+  files_changed: array   — e.g. ["auth.py:added retry logic", "tests/test_auth.py"]
+  next_steps:    array   — list of strings
+  blockers:      array   — list of strings
+```
+
+Auto-captured on every call: git branch, HEAD commit SHA, ticket number from branch, uncommitted files.
+
+### `store_learning`
+
+Stores a permanent finding. Persists across sessions and projects. Embeddings stored alongside for semantic recall.
+
+```
+Parameters:
+  finding:    string  — what was learned (required)
+  evidence:   string  — how this was discovered
+  confidence: "confirmed" | "likely" | "hypothesis"  (default: "confirmed")
+  tags:       array   — list of tag strings
+```
+
+### `recall_learnings`
+
+Searches past findings. Uses semantic search if embeddings are configured, FTS5 keyword search otherwise. Results reranked by: text relevance + recency (48h half-life) + confidence + branch match (exact: +0.30, same prefix: +0.15) + file overlap (+0.20 max).
+
+```
+Parameters:
+  query: string  — what to search for (required)
+  limit: integer  (default: 5)
+```
+
+### `complete_session`
+
+Archives the current session to long-term storage with an embedding for future semantic recall.
+
+```
+Parameters:
+  summary: string  — what was accomplished
+  outcome: "success" | "partial" | "abandoned"  (default: "success")
+```
+
+### `get_memory_stats`
+
+Returns session count, learning count, API call count, search mode, and DB location. No parameters.
+
+### `list_sessions`
+
+Lists past sessions with metadata.
+
+```
+Parameters:
+  limit:  integer  (default: 20)
+  branch: string   — filter by git branch (optional)
+```
+
+### `store_team_learning`
+
+Same as `store_learning` but writes to the `team` namespace — visible to all agents sharing the same DB.
+
+### `recall_team`
+
+Searches the shared team knowledge base.
+
+```
+Parameters:
+  query: string  (required)
+  limit: integer  (default: 5)
+```
+
+### `recall_file_history`
+
+Returns compact change history for a file — what changed, when, by which session, on which branch.
+
+```
+Parameters:
+  file_path: string  — e.g. "agora_code/auth.py"  (required)
+  limit:     integer  (default: 10)
 ```
 
 ---
 
 ## CLI Reference
 
-### Memory commands
+### Inspect memory
 
 ```bash
-agora-code checkpoint              Save session state to disk and SQLite
-  --goal "..."                     What you're trying to accomplish
-  --hypothesis "..."               Current working theory
-  --action "..."                   What you're doing right now
-  --context "..."                  Free-text project notes
-  --file "auth.py:added retry"     File changed (repeatable, with optional note)
-  --next "..."                     Next step (repeatable)
-  --blocker "..."                  Blocker (repeatable)
+# Show current session + timestamps + DB stats
+agora-code status
 
-agora-code inject                  Print compressed context (for agent injection)
-  --level index|summary|detail|full
-  --token-budget 2000              Auto-pick level to fit budget
-  --raw                            Print full session JSON
+# List all past sessions
+agora-code restore
 
-agora-code status                  Show active session + memory stats
+# Restore a specific past session as active
+agora-code restore <session_id>
 
-agora-code learn "<finding>"       Store a permanent learning
-  --evidence "..."
-  --confidence confirmed|likely|hypothesis
-  --tags tag1,tag2
+# Search learnings
+agora-code recall "<query>"
+agora-code recall "cursor hooks" --limit 10
 
-agora-code recall "<query>"        Search the knowledge base
-  --limit 10
-
-agora-code complete                Archive session to long-term memory
-  --summary "..."
-  --outcome success|partial|abandoned
-
-agora-code restore                 List and restore past sessions
-agora-code restore <session_id>    Restore specific session as active
-
-agora-code track-diff <file>       Capture git diff for a file → store summary
-  --committed                      Diff vs HEAD~1 instead of working tree
-
-agora-code file-history <file>     View change log for a file (with author attribution)
-  --limit 20
-
-agora-code install-hooks           Install git post-commit hook (fires on every commit)
-  --force                          Overwrite existing hook
-
-agora-code memory-server           Start project-agnostic MCP memory server
+# View file change history
+agora-code file-history agora_code/auth.py
+agora-code file-history agora_code/auth.py --limit 5
 ```
 
-### API scanning commands
+### Save state
 
 ```bash
-agora-code scan <target>           Scan a codebase or API spec URL
-  --use-llm                        Force LLM extraction
-  --cache                          Use cached results if available
-  --quiet                          Suppress output (for hook use)
+# Save session state
+agora-code checkpoint \
+  --goal "Fix POST /users 422 errors" \
+  --hypothesis "Email regex too strict" \
+  --action "Testing edge cases" \
+  --file "auth.py:added retry" \
+  --file "tests/test_auth.py" \
+  --next "Write integration test" \
+  --blocker "Waiting for staging deploy"
 
-agora-code serve <target>          Start MCP server for API routes
-  --url http://localhost:7755      Base URL of the live API (required)
-  --auth-token <token>             Bearer token
-  --auth-type bearer|api-key|basic|none
+# Store a permanent learning
+agora-code learn "POST /users rejects + in email addresses" \
+  --confidence confirmed \
+  --tags api,validation
 
-agora-code chat <target>           Interactive chat session with your API
-  --url http://localhost:7755
+# Archive completed session
+agora-code complete --summary "Fixed 422, deployed to staging" --outcome success
+```
 
-agora-code auth <target>           Configure auth for API calls
-agora-code stats <target>          Show API call stats from memory
+### Context injection
 
-agora-code agentify <target>       Detect workflows, generate agent code
-  --output ./workflows             Save generated Python files
-  --show-mermaid                   Print Mermaid DAG
-  --llm-provider claude|openai|gemini
+```bash
+# Print compressed context (used by hooks)
+agora-code inject
+agora-code inject --level detail
+agora-code inject --token-budget 1000   # auto-pick level to fit
+agora-code inject --raw                 # full session JSON
+
+# Start MCP memory server
+agora-code memory-server
+```
+
+### File tracking
+
+```bash
+# Capture git diff for a file → store summary
+agora-code track-diff agora_code/auth.py
+agora-code track-diff agora_code/auth.py --committed  # vs last commit
+
+# Install git post-commit hook (auto-tracks on every commit)
+agora-code install-hooks
+agora-code install-hooks --force  # overwrite existing
+```
+
+### API scanning
+
+```bash
+agora-code scan <target>           # scan codebase or OpenAPI spec
+  --cache                          # use cached results
+  --quiet                          # suppress output (for hooks)
+
+agora-code serve <target> --url http://localhost:7755   # start API MCP server
+agora-code stats <target>          # show API call stats
+agora-code chat <target> --url http://localhost:7755    # interactive chat
+agora-code agentify <target>       # detect workflows, generate code
+```
+
+---
+
+## Embeddings — Semantic Search
+
+Embeddings convert text to vectors so semantically similar content is found even when exact keywords don't match. agora-code works without any embeddings (FTS5 keyword search always works), but embeddings make recall significantly better.
+
+### Provider priority (auto-detected)
+
+```
+EMBEDDING_PROVIDER=auto (default):
+  1. OpenAI  text-embedding-3-small  (1536 dims) — set OPENAI_API_KEY
+  2. Gemini  gemini-embedding-001    (768 dims)  — set GEMINI_API_KEY or GOOGLE_API_KEY
+  3. Local   BAAI/bge-small-en-v1.5  (384 dims)  — install sentence-transformers
+  4. None    → FTS5 keyword search only
+```
+
+### Force a specific provider
+
+```bash
+# Fully offline — no API key, no internet
+export EMBEDDING_PROVIDER=local
+pip install "git+https://github.com/thebnbrkr/agora-code[local]"
+
+# Or override the local model
+export LOCAL_EMBEDDING_MODEL=BAAI/bge-large-en-v1.5  # 1024 dims, more accurate
+```
+
+### Check which provider is active
+
+```bash
+agora-code status
+# Shows: [vector search: on (openai)] or [vector search: off (install sqlite-vec)]
+
+# Or from Python:
+python3 -c "from agora_code.embeddings import provider_info; print(provider_info())"
+```
+
+### Embedding cache
+
+Query embeddings are cached in-process with `@lru_cache(maxsize=256)` — repeated searches for the same query string don't re-call the API. Storage embeddings (store_learning, complete_session) are always fresh.
+
+---
+
+## Project Scoping
+
+agora-code uses `project_id` to scope sessions and learnings per project. This prevents context from one project bleeding into another when the global DB is shared.
+
+**`project_id` is derived from your git remote URL:**
+
+```bash
+git remote get-url origin
+# → https://github.com/you/your-project  (used as project_id)
+```
+
+Falls back to the current directory name if no git remote is set.
+
+This means:
+- `recall_learnings` only surfaces learnings from the current project by default
+- `get_session_context` only recalls the last session from this project
+- When you move between projects, each gets its own scoped memory
+
+### SaaS / multi-device use
+
+`project_id` is the natural tenant isolation key for a hosted Supabase backend. All sessions and learnings for a project are queryable with a single `WHERE project_id = ?` filter.
+
+---
+
+## File Change Tracking
+
+Every time the AI edits a file, agora-code captures what changed and stores a compact summary. Over time, this builds a per-file change history queryable without reading the file.
+
+```bash
+# View change history for a file
+agora-code file-history agora_code/auth.py
+
+# Output:
+# Change history for agora_code/auth.py (3 entries):
+# • 2026-03-12 [main] @abc123def456: added _get_project_id(), updated update_session
+# • 2026-03-11 [main]: added retry logic to validate(), updated imports
+# • 2026-03-10 [feat/auth]: initial auth implementation
+```
+
+The `afterFileEdit` hook runs `track-diff` automatically on every file save. You can also run it manually:
+
+```bash
+agora-code track-diff agora_code/auth.py           # working tree diff
+agora-code track-diff agora_code/auth.py --committed  # vs last commit
+```
+
+---
+
+## Git Integration
+
+agora-code automatically captures git context on every checkpoint — no manual input needed.
+
+| Field | How detected | Example |
+|---|---|---|
+| `branch` | `git rev-parse --abbrev-ref HEAD` | `feat/auth-service` |
+| `commit_sha` | `git rev-parse --short=12 HEAD` | `abc123def456` |
+| `ticket` | Regex on branch name | `JIRA-423` from `JIRA-423-fix-login` |
+| `uncommitted_files` | `git status --porcelain` | `["auth.py", "middleware.py"]` |
+| `project_id` | `git remote get-url origin` | `https://github.com/you/repo` |
+| `goal` (fallback) | Derived from branch | `"JIRA-423: fix login"` |
+
+### Ticket extraction patterns
+
+| Branch | Extracted ticket |
+|---|---|
+| `JIRA-423-fix-login` | `JIRA-423` |
+| `feature/JIRA-423-login` | `JIRA-423` |
+| `fix/gh-456-null-ptr` | `GH-456` |
+| `GH-78-perf` | `GH-78` |
+| `feat/auth-service` | *(none — goal derived as "Working on feat/auth-service")* |
+
+---
+
+## Team Namespaces
+
+Multiple agents working on the same project can share a knowledge pool:
+
+```
+Agent A stores:  store_team_learning("Rate limit on /auth: 100 req/min per IP")
+Agent B recalls: recall_team("rate limiting")  → finds Agent A's learning
+```
+
+For shared memory, all agents must point to the same DB:
+
+```bash
+export AGORA_CODE_DB=/shared/path/agora-memory.db
+```
+
+Or in MCP config:
+
+```json
+{
+  "mcpServers": {
+    "agora-memory": {
+      "command": "/full/path/to/agora-code",
+      "args": ["memory-server"],
+      "env": {"AGORA_CODE_DB": "/shared/path/agora-memory.db"}
+    }
+  }
+}
 ```
 
 ---
 
 ## API Discovery + MCP Server
 
-`agora-code serve` scans a codebase and exposes every discovered endpoint as an MCP tool, so your AI assistant can call your API directly.
+`agora-code serve` scans a codebase and exposes every discovered endpoint as an MCP tool — your AI can call your API directly.
 
-### Route discovery pipeline
-
-agora-code uses a 4-tier fallback pipeline:
+### Route discovery pipeline (4-tier cascade)
 
 ```
-Tier 1: OpenAPI/Swagger spec
-        → Reads spec JSON/YAML directly
-        → Activates for: URLs or .json/.yaml files
-        → Accuracy: 100%
-
-Tier 2: Python AST parser
-        → Reads FastAPI/Flask/Django source code
-        → Activates for: directories with .py files
-        → Accuracy: ~95%
-
-Tier 3: LLM extraction  ← auto-activates if Tier 1+2 find < 2 routes
-        → Sends source to Claude/GPT/Gemini
-        → Activates for: any language if API key set
-        → Accuracy: ~90%
-
-Tier 4: Regex fallback
-        → Pattern-matches app.get(), router.post(), etc.
-        → Always available as last resort
-        → Accuracy: ~70%
+Tier 1: OpenAPI/Swagger spec      → reads spec JSON/YAML directly       (100% accurate)
+Tier 2: Python AST parser         → FastAPI/Flask/Django decorators      (~95% accurate)
+Tier 3: LLM extraction            → Claude/GPT/Gemini reads source       (~90% accurate)
+Tier 4: Regex fallback            → pattern-matches route decorators     (~70% accurate)
 ```
 
-### MCP server setup
+### Connect as MCP server
 
 ```json
 {
   "mcpServers": {
     "my-api": {
-      "command": "agora-code",
+      "command": "/full/path/to/agora-code",
       "args": ["serve", "/path/to/project", "--url", "http://localhost:7755"]
     }
   }
@@ -670,9 +774,10 @@ Tier 4: Regex fallback
 ```
 
 With authentication:
+
 ```bash
 agora-code serve ./my-api --url http://localhost:7755 --auth-token mytoken
-# or
+# or via env:
 AGORA_AUTH_TOKEN=mytoken agora-code serve ./my-api --url http://localhost:7755
 ```
 
@@ -684,20 +789,8 @@ AGORA_AUTH_TOKEN=mytoken agora-code serve ./my-api --url http://localhost:7755
 
 ```bash
 agora-code agentify ./my-api --show-mermaid
-agora-code agentify ./my-api --output ./workflows
+agora-code agentify ./my-api --output ./workflows --llm-provider claude
 ```
-
-Example output for an e-commerce API:
-```
-✅ 1 workflow(s) detected:
-
-  ◆  purchase_workflow
-     Search for products, add to cart, and checkout
-     Steps: GET /products/search → POST /cart/add → POST /cart/checkout
-     Triggers: buy, order, purchase, shop
-```
-
-The `--output` flag generates ready-to-run Python files using the Agora AsyncFlow framework.
 
 ---
 
@@ -706,22 +799,24 @@ The `--output` flag generates ready-to-run Python files using the Agora AsyncFlo
 ```
 .agora-code/
   session.json          Active session (project-local, gitignored)
+  .gitignore            Auto-created, ignores everything in this dir
 
 ~/.agora-code/
-  memory.db             SQLite database (global, all projects)
+  memory.db             SQLite database (global — all projects)
     ├── sessions         Archived session records
     │     session_id, goal, hypothesis, branch, commit_sha,
-    │     ticket, status, session_data (full JSON), tags
+    │     ticket, status, session_data (full JSON), project_id
     ├── learnings        Permanent findings
     │     finding, evidence, confidence, tags, branch, files,
-    │     namespace (personal/team), embedding (vector)
+    │     namespace (personal/team), project_id
     ├── file_changes     Per-file git diff history
     │     file_path, diff_summary, diff_snippet, commit_sha,
     │     session_id, branch, timestamp
-    └── api_calls        API call log (for serve/chat mode)
+    └── api_calls        HTTP interaction log (for serve/chat mode)
 ```
 
 Override the DB path:
+
 ```bash
 export AGORA_CODE_DB=/path/to/custom/memory.db
 ```
@@ -736,7 +831,7 @@ export AGORA_CODE_DB=/path/to/custom/memory.db
 |---|---|---|
 | `index` | Goal + status + branch | ~50 |
 | `summary` | + hypothesis + top discoveries + next steps | ~200 |
-| `detail` | + all discoveries, decisions, blockers, files | ~500 |
+| `detail` | + all discoveries, decisions, blockers, files changed | ~500 |
 | `full` | Raw JSON (no compression) | 3,000+ |
 
 `inject` auto-picks the richest level that fits within `--token-budget` (default: 2,000 tokens).
@@ -747,15 +842,18 @@ export AGORA_CODE_DB=/path/to/custom/memory.db
 
 | Variable | Purpose | Default |
 |---|---|---|
-| `ANTHROPIC_API_KEY` | Enables Claude for LLM scan + workflow detection | — |
-| `OPENAI_API_KEY` | Enables GPT + OpenAI embeddings for semantic recall | — |
-| `GEMINI_API_KEY` | Enables Gemini for LLM scan + embeddings | — |
+| `OPENAI_API_KEY` | OpenAI embeddings + GPT LLM scan | — |
+| `GEMINI_API_KEY` / `GOOGLE_API_KEY` | Gemini embeddings + LLM scan | — |
+| `ANTHROPIC_API_KEY` | Claude for LLM scan + workflow detection | — |
+| `EMBEDDING_PROVIDER` | `auto` / `openai` / `gemini` / `local` | `auto` |
+| `LOCAL_EMBEDDING_MODEL` | sentence-transformers model name | `BAAI/bge-small-en-v1.5` |
+| `EMBEDDING_DEVICE` | `cpu` / `cuda` / `mps` for local model | `cpu` |
 | `AGORA_CODE_DB` | Override memory DB path | `~/.agora-code/memory.db` |
 | `AGORA_AUTH_TOKEN` | Default bearer token for API calls | — |
-| `LLM_PROVIDER` | Force a provider: `claude` / `openai` / `gemini` | auto |
-| `LLM_MODEL` | Override default model | provider default |
+| `LLM_PROVIDER` | Force: `claude` / `openai` / `gemini` | auto |
+| `LLM_MODEL` | Override default model per provider | provider default |
 
-**Embeddings fallback chain**: OpenAI → Gemini → sentence-transformers (local, no API key needed) → keyword-only FTS5. Semantic search works offline if `sentence-transformers` is installed.
+**Embedding fallback chain:** OpenAI → Gemini → sentence-transformers (local, fully offline) → FTS5 keyword-only. Semantic search works without any API key if `sentence-transformers` is installed.
 
 ---
 
@@ -764,27 +862,29 @@ export AGORA_CODE_DB=/path/to/custom/memory.db
 ```
 agora-code/
 ├── agora_code/
-│   ├── memory_server.py    MCP server for session memory (10 tools)
-│   ├── session.py          Session lifecycle, git helpers, compression
-│   ├── vector_store.py     SQLite + sqlite-vec + FTS5 + file_changes
+│   ├── cli.py              All CLI commands (inject, checkpoint, recall, etc.)
+│   ├── memory_server.py    MCP server for session memory (10 tools, JSON-RPC 2.0)
+│   ├── session.py          Session lifecycle, git helpers, DB recall, project_id
+│   ├── vector_store.py     SQLite + sqlite-vec + FTS5, project_id scoping
+│   ├── embeddings.py       OpenAI / Gemini / local sentence-transformers, LRU cache
 │   ├── tldr.py             Context compression (index/summary/detail/full)
-│   ├── embeddings.py       OpenAI/Gemini/sentence-transformers with LRU cache
-│   ├── cli.py              All CLI commands
-│   ├── agent.py            MCP server for API routes (JSON-RPC 2.0 over stdio)
+│   ├── agent.py            MCP server for API routes
 │   ├── scanner.py          4-tier route discovery pipeline
-│   ├── workflows.py        Workflow detection + Agora AsyncFlow code generator
+│   ├── workflows.py        Workflow detection + code generator
 │   ├── models.py           Route, Param, RouteCatalog dataclasses
 │   └── extractors/
 │       ├── openapi.py      Tier 1: OpenAPI/Swagger spec parser
 │       ├── python_ast.py   Tier 2: FastAPI/Flask/Django AST
 │       ├── llm.py          Tier 3: LLM extraction (Claude/GPT/Gemini)
 │       └── regex.py        Tier 4: Regex fallback
+├── .cursor/
+│   ├── hooks.json          Cursor hook config (version:1, camelCase event names)
+│   └── hooks/              Shell scripts (session-start.sh, after-file-edit.sh, pre-compact.sh)
 ├── .claude/hooks.json      Claude Code hook config
 ├── .gemini/settings.json   Gemini CLI hook config
-├── .cursor/hooks.json      Cursor hook config
 ├── .github/hooks/          Copilot CLI hook config
-├── SKILL.md                Agent tool usage reference
-├── tests/                  60 tests — run with: pytest tests/
+├── SKILL.md                Agent tool-usage reference card
+├── tests/                  186 tests — run with: pytest tests/
 └── pyproject.toml
 ```
 
@@ -792,8 +892,8 @@ agora-code/
 
 ## What agora-code is NOT
 
-- Not a hosted service — everything runs locally
+- Not a hosted service — everything runs locally (SQLite, local files)
+- Not cloud-dependent — works fully offline with FTS5 keyword search
 - Not an API proxy or gateway
 - Not a replacement for Postman (this is for AI-assisted development)
-- Not cloud-dependent — works fully offline with keyword search only
 - Not specific to Python — the memory layer works for any project; API scanning targets Python/OpenAPI
