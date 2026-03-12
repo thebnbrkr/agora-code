@@ -420,8 +420,14 @@ def status():
         _echo("📭 No active session. Start one with:")
         _echo("   agora-code checkpoint --goal \"What you're trying to do\"")
     else:
+        from agora_code.tldr import _session_age_str
+        age = _session_age_str(session)
+        started = session.get("started_at", "")[:19].replace("T", " ")
+        last = session.get("last_active", "")[:19].replace("T", " ")
         _echo("\n" + "═" * 60)
         _echo(f"🗂  SESSION: {session.get('session_id', 'unknown')}")
+        _echo(f"   Started:     {started} UTC")
+        _echo(f"   Last active: {last} UTC  ({age})")
         _echo("═" * 60)
         _echo(compress_session(session, level="detail"))
 
