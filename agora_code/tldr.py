@@ -385,8 +385,21 @@ def _session_summary(session: dict) -> str:
 
 
 def _session_detail(session: dict) -> str:
-    """~500 tokens: summary + decisions + full endpoint table."""
+    """~500 tokens: summary + files changed + decisions + full endpoint table."""
     lines = [_session_summary(session)]
+
+    files = session.get("files_changed", [])
+    if files:
+        lines.append("\nFILES CHANGED:")
+        for f in files[:10]:
+            if isinstance(f, dict):
+                fname = f.get("file", "")
+                what = f.get("what", "")
+                lines.append(f"  • {fname} — {what}" if what else f"  • {fname}")
+            else:
+                lines.append(f"  • {f}")
+        if len(files) > 10:
+            lines.append(f"  … +{len(files) - 10} more")
 
     decisions = session.get("decisions_made", [])
     if decisions:

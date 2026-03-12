@@ -304,8 +304,25 @@ def test_compress_session_summary(rich_session):
 
 def test_compress_session_detail(rich_session):
     out = compress_session(rich_session, level="detail")
+    assert "FILES CHANGED:" in out
+    assert "auth.py" in out
+    assert "added retry logic" in out
     assert "DECISIONS MADE:" in out
     assert "FULL ENDPOINT STATUS:" in out
+
+
+def test_compress_session_detail_shows_all_changed_files(rich_session):
+    out = compress_session(rich_session, level="detail")
+    assert "middleware.py" in out
+
+
+def test_compress_session_detail_richer_than_summary(rich_session):
+    """detail must contain more content than summary for sessions with files_changed."""
+    summary = compress_session(rich_session, level="summary")
+    detail = compress_session(rich_session, level="detail")
+    assert len(detail) > len(summary)
+    assert "FILES CHANGED:" in detail
+    assert "FILES CHANGED:" not in summary
 
 
 def test_compress_session_full_is_json(rich_session):
