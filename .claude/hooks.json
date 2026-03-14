@@ -6,11 +6,11 @@
                 "hooks": [
                     {
                         "type": "command",
-                        "command": "export PATH=\"$PATH:/Users/andjelaacic/Library/Python/3.11/bin\" && agora-code inject --quiet 2>/dev/null || true"
+                        "command": "agora-code inject --quiet 2>/dev/null || true"
                     },
                     {
                         "type": "command",
-                        "command": "export PATH=\"$PATH:/Users/andjelaacic/Library/Python/3.11/bin\" && .claude/hooks/on-prompt.sh"
+                        "command": ".claude/hooks/on-prompt.sh"
                     }
                 ]
             }
@@ -21,7 +21,7 @@
                 "hooks": [
                     {
                         "type": "command",
-                        "command": "export PATH=\"$PATH:/Users/andjelaacic/Library/Python/3.11/bin\" && .claude/hooks/pre-read.sh"
+                        "command": ".claude/hooks/pre-read.sh"
                     }
                 ]
             }
@@ -32,11 +32,11 @@
                 "hooks": [
                     {
                         "type": "command",
-                        "command": "export PATH=\"$PATH:/Users/andjelaacic/Library/Python/3.11/bin\" && agora-code scan . --cache --quiet 2>/dev/null || true"
+                        "command": "agora-code scan . --cache --quiet 2>/dev/null || true"
                     },
                     {
                         "type": "command",
-                        "command": "export PATH=\"$PATH:/Users/andjelaacic/Library/Python/3.11/bin\" && python3 -c \"import sys,json,subprocess; d=json.loads(sys.stdin.read()); fp=(d.get('tool_input') or {}).get('file_path',''); subprocess.run(['/Users/andjelaacic/Library/Python/3.11/bin/agora-code','track-diff',fp]) if fp else None\" 2>/dev/null || true"
+                        "command": "python3 -c \"import sys,json,subprocess; d=json.loads(sys.stdin.read()); fp=(d.get('tool_input') or {}).get('file_path',''); subprocess.run(['agora-code','track-diff',fp]) if fp else None\" 2>/dev/null || true"
                     }
                 ]
             }
@@ -47,7 +47,7 @@
                 "hooks": [
                     {
                         "type": "command",
-                        "command": "export PATH=\"$PATH:/Users/andjelaacic/Library/Python/3.11/bin\" && agora-code checkpoint --quiet 2>/dev/null || true"
+                        "command": "agora-code checkpoint --quiet 2>/dev/null || true"
                     }
                 ]
             }
@@ -58,7 +58,7 @@
                 "hooks": [
                     {
                         "type": "command",
-                        "command": "export PATH=\"$PATH:/Users/andjelaacic/Library/Python/3.11/bin\" && agora-code checkpoint --quiet 2>/dev/null || true"
+                        "command": "agora-code checkpoint --quiet 2>/dev/null || true"
                     }
                 ]
             }

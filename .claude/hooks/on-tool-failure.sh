@@ -1,5 +1,4 @@
 #!/bin/sh
-export PATH="$PATH:/Users/andjelaacic/Library/Python/3.11/bin"
 # Claude Code PostToolUseFailure hook — track tool failures in session memory.
 #
 # Fires after a tool call fails. Stores the error so it can be recalled

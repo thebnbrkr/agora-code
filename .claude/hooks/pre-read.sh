@@ -1,5 +1,4 @@
 #!/bin/sh
-export PATH="$PATH:/Users/andjelaacic/Library/Python/3.11/bin"
 # Claude Code PreToolUse:Read hook — intercept large file reads.
 # Claude Code passes the file path via $CLAUDE_TOOL_INPUT_FILE_PATH env var
 # and reads JSON from stdin. Output: allow (exit 0) or block (exit 2).

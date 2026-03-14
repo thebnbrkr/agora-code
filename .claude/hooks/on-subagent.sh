@@ -1,5 +1,4 @@
 #!/bin/sh
-export PATH="$PATH:/Users/andjelaacic/Library/Python/3.11/bin"
 # Claude Code SubagentStart hook — inject session context into subagents.
 #
 # Fires when a subagent spawns. Injects compressed session state so the

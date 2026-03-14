@@ -1,5 +1,4 @@
 #!/bin/sh
-export PATH="$PATH:/Users/andjelaacic/Library/Python/3.11/bin"
 # Claude Code UserPromptSubmit hook — enrich user prompts with relevant learnings.
 #
 # Fires when the user submits a prompt. Searches stored learnings for
