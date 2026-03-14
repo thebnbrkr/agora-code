@@ -45,13 +45,19 @@ try:
                 continue
 
     # Extract user messages (the questions/goals)
+    # Claude Code transcript format: each line has a "message" key with role/content
     user_msgs = []
     for m in messages:
-        role = m.get("role", "")
-        content = m.get("content", "")
-        if role == "user" and isinstance(content, str) and content.strip():
-            user_msgs.append(content.strip()[:200])
-        elif role == "user" and isinstance(content, list):
+        msg = m.get("message", m)  # unwrap if nested, fall back to top-level
+        role = msg.get("role", "")
+        content = msg.get("content", "")
+        if role != "user":
+            continue
+        if isinstance(content, str) and content.strip():
+            # skip tool results
+            if not content.strip().startswith("[{"):
+                user_msgs.append(content.strip()[:200])
+        elif isinstance(content, list):
             for block in content:
                 if isinstance(block, dict) and block.get("type") == "text":
                     text = block.get("text", "").strip()
@@ -72,9 +78,10 @@ try:
 
     summary = " — ".join(summary_parts)
 
-    import subprocess
+    import subprocess, shutil
+    agora_bin = shutil.which("agora-code") or "agora-code"
     subprocess.run(
-        ["agora-code", "learn", summary, "--confidence", "confirmed", "--tags", "conversation-summary"],
+        [agora_bin, "learn", summary, "--confidence", "confirmed", "--tags", "conversation-summary"],
         capture_output=True
     )
 
