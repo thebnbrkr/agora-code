@@ -81,13 +81,24 @@
                 ]
             }
         ],
+        "Stop": [
+            {
+                "matcher": "",
+                "hooks": [
+                    {
+                        "type": "command",
+                        "command": ".claude/hooks/on-stop.sh"
+                    }
+                ]
+            }
+        ],
         "SessionEnd": [
             {
                 "matcher": "",
                 "hooks": [
                     {
                         "type": "command",
-                        "command": "agora-code checkpoint --quiet 2>/dev/null || true"
+                        "command": ".claude/hooks/on-stop.sh"
                     }
                 ]
             }
