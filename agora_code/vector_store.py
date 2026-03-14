@@ -363,7 +363,10 @@ class VectorStore:
             age_hours = (datetime.now(timezone.utc) - last).total_seconds() / 3600
             if age_hours > max_age_hours:
                 return None
-        except Exception:
+        except Exception as e:
+            from agora_code.log import log
+            log.warning("corrupt last_active timestamp in session %r: %s",
+                        row.get("session_id", "?"), e)
             return None
 
         return json.loads(row["session_data"])
@@ -534,7 +537,9 @@ class VectorStore:
             """, params).fetchall()
 
             return [_learning_row(r) for r in rows[:k]]
-        except Exception:
+        except Exception as e:
+            from agora_code.log import log
+            log.warning("semantic search failed: %s", e)
             return []
 
     def search_learnings_keyword(

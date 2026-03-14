@@ -17,8 +17,13 @@ classifiers = [
     "License :: OSI Approved :: MIT License",
 ]
 
-# Core: click for CLI, stdlib for tiers 1, 2, 4
-dependencies = ["click>=8.0"]
+# Core: click for CLI, tree-sitter for structural summarization, tiktoken for
+# accurate token counting. Both have graceful fallbacks but are always installed.
+dependencies = [
+    "click>=8.0",
+    "tree-sitter-language-pack>=0.13",   # AST-based file summarizer (170+ langs)
+    "tiktoken>=0.7",                      # Accurate BPE token counting
+]
 
 [project.optional-dependencies]
 # Tier 3 extractors
@@ -28,35 +33,34 @@ gemini  = ["google-generativeai>=0.8"]
 # Agent LLM backend
 llm     = ["openai>=1.0"]
 
-# Accurate token counting (optional — falls back to word heuristic)
-tokens  = ["tiktoken>=0.7"]
+# Vector similarity search in SQLite (semantic recall, learning search)
+# Falls back to FTS5 keyword search when not installed.
+vec     = ["sqlite-vec>=0.1"]
 
 # Local embeddings — fully offline, no API key needed
-local   = ["sentence-transformers>=2.2", "torch>=2.0"]
+# Uses bge-small-en-v1.5 by default (~130MB). Set LOCAL_EMBEDDING_MODEL to override.
+local   = ["sentence-transformers>=2.2"]
 
 # Memory integration
 memory  = ["agora-mem>=0.1.0"]
 
 # --- Enterprise edition ---
-# Supabase cloud backend (future: multi-tenant, shared catalogs)
 enterprise = [
     "supabase>=2.0",
     "agora-mem[supabase]>=0.1.0",
 ]
-# Auth placeholder — Supabase Auth or WorkOS, wired in later
-# enterprise-auth = ["workos>=4.0"]   # uncomment when ready
 
 # Dev / test
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
-    "httpx>=0.27",          # for mocking API calls in tests
+    "httpx>=0.27",
     "ruff>=0.4",
 ]
 
 # Everything
 all = [
-    "agora-code[openai,gemini,llm,memory,enterprise,dev]",
+    "agora-code[openai,gemini,llm,vec,local,memory,enterprise,dev]",
 ]
 
 [project.scripts]

@@ -239,6 +239,36 @@ class RouteCatalog:
             indent=2,
         )
 
+    @classmethod
+    def from_json(cls, json_str: str) -> "RouteCatalog":
+        """Deserialize a RouteCatalog from JSON produced by to_json()."""
+        data = json.loads(json_str)
+        routes = []
+        for r in data.get("routes", []):
+            params = [
+                Param(
+                    name=p["name"],
+                    type=p.get("type", "any"),
+                    required=p.get("required", False),
+                    location=p.get("location", "query"),
+                    description=p.get("description", ""),
+                )
+                for p in r.get("params", [])
+            ]
+            routes.append(Route(
+                method=r["method"],
+                path=r["path"],
+                params=params,
+                description=r.get("description", ""),
+                tags=r.get("tags", []),
+            ))
+        return cls(
+            source=data["source"],
+            extractor=data["extractor"],
+            routes=routes,
+            edition=data.get("edition", "community"),
+        )
+
 
 # --------------------------------------------------------------------------- #
 #  Helpers                                                                     #

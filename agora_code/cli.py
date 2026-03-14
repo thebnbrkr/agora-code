@@ -31,7 +31,8 @@ import click
 @click.version_option(package_name="agora-code")
 def main():
     """agora-code — Turn any API into a memory-aware agent."""
-    pass
+    from agora_code.log import configure
+    configure()
 
 
 # --------------------------------------------------------------------------- #
@@ -77,8 +78,9 @@ def scan(target, output, use_llm, llm_provider, fmt, enterprise, cache, quiet):
                 if output:
                     Path(output).write_text(catalog.to_json(), encoding="utf-8")
                 return
-            except Exception:
-                pass  # cache unreadable — fall through to live scan
+            except Exception as e:
+                if not quiet:
+                    _echo(f"⚠️  Cache file unreadable ({e}), falling back to live scan", err=True)
 
     if not quiet:
         _echo(f"🔍 Scanning {target!r}...")
@@ -204,14 +206,14 @@ def stats(target, window):
         any_calls = False
         for route in catalog.routes[:20]:
             s = store.get_endpoint_stats(route.method, route.path)
-            if s["total_calls"] == 0:
+            if s["total"] == 0:
                 continue
             any_calls = True
             success_pct = int(s["success_rate"] * 100) if s["success_rate"] else 0
             latency = f"{s['avg_latency_ms']:.0f}ms" if s["avg_latency_ms"] else "—"
             _echo(
                 f"  {route.method:6} {route.path:40} "
-                f"{s['total_calls']:4} calls  "
+                f"{s['total']:4} calls  "
                 f"{success_pct:3}% ok  "
                 f"{latency}"
             )
@@ -526,9 +528,9 @@ def complete(summary, outcome):
 # --------------------------------------------------------------------------- #
 
 @main.command()
-@click.option("--level", default="summary",
+@click.option("--level", default=None,
               type=click.Choice(["index", "summary", "detail", "full"]),
-              help="Compression level (default: summary ~200 tokens)")
+              help="Compression level — auto-picks under --token-budget if not set")
 @click.option("--token-budget", default=2000, help="Max tokens for auto-level picking")
 @click.option("--raw", is_flag=True, default=False, help="Print raw session JSON")
 @click.option("--quiet", is_flag=True, default=False,
@@ -570,7 +572,8 @@ def inject(level, token_budget, raw, quiet):
         click.echo(_json.dumps(session, indent=2))
         return
 
-    if level == "auto" or token_budget:
+    if level is None:
+        # No level specified — auto-pick highest detail that fits under budget
         text = auto_compress_session(session, token_budget=token_budget)
     else:
         text = compress_session(session, level=level)
@@ -771,7 +774,8 @@ def track_diff(file_path, committed):
                 raw_diff = f"[new untracked file: {file_path}]"
             else:
                 return  # Nothing to track
-        except Exception:
+        except Exception as e:
+            _echo(f"⚠️  git status failed for {file_path}: {e}", err=True)
             return
 
     # Generate content-aware summary from diff
@@ -987,8 +991,18 @@ def summarize(file_path, max_tokens, json_out, threshold):
     Files under --threshold lines return empty (signal: let it through).
     """
     from agora_code.summarizer import summarize_file, FILE_SIZE_THRESHOLD
+    import os
 
-    path = Path(file_path)
+    path = Path(file_path).resolve()
+
+    # Restrict to paths the user actually owns: CWD subtree or home subtree.
+    # This prevents hooks from being weaponised to read system files.
+    _allowed_roots = [Path.cwd().resolve(), Path.home().resolve()]
+    if not any(str(path).startswith(str(r)) for r in _allowed_roots):
+        if json_out:
+            click.echo(json.dumps({"action": "allow", "reason": "path outside allowed roots"}))
+        return
+
     if not path.exists():
         if json_out:
             click.echo(json.dumps({"action": "allow", "reason": "file not found"}))
@@ -1010,17 +1024,28 @@ def summarize(file_path, max_tokens, json_out, threshold):
             _echo(f"✅ {file_path}: {len(content.splitlines())} lines — below threshold, pass through")
         return
 
+    from agora_code.summarizer import estimate_tokens
+    original_tokens = estimate_tokens(content)
+    summary_tokens = estimate_tokens(summary)
+    reduction = round((1 - summary_tokens / original_tokens) * 100, 1) if original_tokens > 0 else 0
+
+    # Extract parser tag from summary footer
+    parser = "unknown"
+    for line in summary.splitlines()[-3:]:
+        if line.startswith("[parser="):
+            parser = line[8:].rstrip("]")
+            break
+
     if json_out:
         click.echo(json.dumps({
             "action": "summarize",
+            "parser": parser,
             "summary": summary,
             "original_lines": len(content.splitlines()),
-            "summary_tokens": len(summary) // 4,
+            "original_tokens": original_tokens,
+            "summary_tokens": summary_tokens,
         }))
     else:
-        original_tokens = len(content) // 4
-        summary_tokens = len(summary) // 4
-        reduction = round((1 - summary_tokens / original_tokens) * 100, 1) if original_tokens > 0 else 0
         _echo(f"📊 {file_path}: {original_tokens} → {summary_tokens} tokens ({reduction}% reduction)\n")
         click.echo(summary)
 

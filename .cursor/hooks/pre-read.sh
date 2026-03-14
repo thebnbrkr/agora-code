@@ -30,6 +30,37 @@ if [ -z "$FILE_PATH" ]; then
     exit 0
 fi
 
+# ── Bypass rules — pass through without summarising ──────────────────────────
+# 1. Targeted read (offset or limit present) — agent already knows the line from
+#    a prior summary and is doing a surgical read. Don't intercept.
+# 2. agora-code's own source — allow full reads so the agent can edit its code.
+BYPASS=$(printf '%s' "$INPUT" | python3 -c "
+import sys, json, os
+try:
+    d = json.loads(sys.stdin.read())
+    ti = d.get('tool_input', {})
+    if isinstance(ti, str):
+        ti = json.loads(ti)
+    # Rule 1: offset or limit present → targeted read
+    if ti.get('offset') is not None or ti.get('limit') is not None:
+        print('yes')
+        sys.exit(0)
+    # Rule 2: agora-code own source files
+    fp = ti.get('file_path') or ti.get('path') or ''
+    parts = fp.replace(os.sep, '/').split('/')
+    if 'agora_code' in parts or '.cursor/hooks' in fp or '.claude/hooks' in fp:
+        print('yes')
+        sys.exit(0)
+    print('no')
+except Exception:
+    print('no')
+" 2>/dev/null)
+
+if [ "$BYPASS" = "yes" ]; then
+    printf '{"permission":"allow"}\n'
+    exit 0
+fi
+
 RESULT=$(agora-code summarize "$FILE_PATH" --json-output 2>/dev/null)
 
 if [ -z "$RESULT" ]; then
@@ -50,12 +81,33 @@ if [ "$ACTION" = "summarize" ]; then
     SUMMARY_PATH=$(printf '%s' "$RESULT" | python3 -c "
 import sys, json, os, hashlib
 d = json.loads(sys.stdin.read())
-summary = d.get('summary', '')
-orig = d.get('original_lines', 0)
-toks = d.get('summary_tokens', 0)
+summary  = d.get('summary', '')
+parser   = d.get('parser', 'unknown')
+orig     = d.get('original_lines', 0)
+orig_tok = d.get('original_tokens', orig * 4)
+sum_tok  = d.get('summary_tokens', len(summary) // 4)
 file_path = '$FILE_PATH'
 
-content = summary + '\n\n[File has ' + str(orig) + ' lines. Summary is ~' + str(toks) + ' tokens. To read specific sections, request line ranges with offset+limit.]'
+# Generic fallback: parser couldn't extract structure.
+# Serve the full file content with a prompt so the LLM can read it and
+# generate a structural understanding in one pass.
+if parser == 'generic':
+    try:
+        with open(file_path, 'r', encoding='utf-8', errors='replace') as fh:
+            raw = fh.read()
+        prompt = (
+            '\n\n---\n'
+            '[STRUCTURAL ANALYSIS NEEDED]\n'
+            f'agora-code could not parse {os.path.basename(file_path)} with tree-sitter or regex.\n'
+            'After reading this file, please document its key classes, functions, and purpose\n'
+            'so future reads can use a summary instead of the full content.\n'
+            '---\n'
+        )
+        content = raw + prompt
+    except Exception:
+        content = summary
+else:
+    content = summary + '\n\n[File has ' + str(orig) + ' lines / ~' + str(orig_tok) + ' tokens. Summary is ~' + str(sum_tok) + ' tokens. To read specific sections use offset+limit.]'
 
 summary_dir = '/tmp/agora-code-summaries'
 os.makedirs(summary_dir, exist_ok=True)
