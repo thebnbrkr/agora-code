@@ -387,9 +387,10 @@ def _preceding_comment(source_lines: list[str], decl_line: int) -> str:
         return text[:120] if text else ""
 
     # Case 2: consecutive single-line comment block (walk back while lines are comments)
+    # Cap at 8 lines — avoids collecting an entire license header above a declaration.
     collected: list[str] = []
     i = idx
-    while i >= 0:
+    while i >= 0 and (idx - i) < 8:
         line = source_lines[i].strip()
         matched = False
         for prefix in comment_prefixes:
