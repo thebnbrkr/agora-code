@@ -295,29 +295,49 @@ chmod +x .cursor/hooks/*.sh
 
 ### Claude Code
 
-Create `.claude/hooks.json` in your project root:
+**One-command setup** (recommended):
+```bash
+agora-code install-hooks --claude-code
+```
+
+This generates `.claude/settings.json` and hook scripts with the correct paths for your machine. Restart Claude Code to activate.
+
+**Or manually** — create `.claude/settings.json` in your project root (note: hooks must be in `settings.json`, not `hooks.json`):
 
 ```json
 {
   "hooks": {
     "SessionStart": [
-      {"type": "command", "command": "agora-code inject --quiet"}
+      {"matcher": "", "hooks": [{"type": "command", "command": "agora-code inject --quiet 2>/dev/null || true"}]}
     ],
-    "PreCompact": [
-      {"type": "command", "command": "agora-code checkpoint --quiet"}
+    "UserPromptSubmit": [
+      {"matcher": "", "hooks": [{"type": "command", "command": ".claude/hooks/on-prompt.sh"}]}
+    ],
+    "PreToolUse": [
+      {"matcher": "Read", "hooks": [{"type": "command", "command": ".claude/hooks/pre-read.sh"}]}
     ],
     "PostToolUse": [
       {
         "matcher": "Write|Edit|MultiEdit",
         "hooks": [
-          {"type": "command", "command": "agora-code scan . --cache --quiet"},
-          {"type": "command", "command": "agora-code track-diff $CLAUDE_TOOL_INPUT_FILE_PATH"}
+          {"type": "command", "command": "agora-code scan . --cache --quiet 2>/dev/null || true"},
+          {"type": "command", "command": "python3 -c \"import sys,json,subprocess; d=json.loads(sys.stdin.read()); fp=(d.get('tool_input') or {}).get('file_path',''); subprocess.run(['agora-code','track-diff',fp]) if fp else None\" 2>/dev/null || true"}
         ]
       }
+    ],
+    "PreCompact": [
+      {"matcher": "", "hooks": [{"type": "command", "command": "agora-code checkpoint --quiet 2>/dev/null || true"}]}
+    ],
+    "SessionEnd": [
+      {"matcher": "", "hooks": [{"type": "command", "command": "agora-code checkpoint --quiet 2>/dev/null || true"}]}
     ]
   }
 }
 ```
+
+Also add a `CLAUDE.md` at the project root so Claude uses agora-code tools automatically — see the included `CLAUDE.md` for a template.
+
+> **Note:** `$CLAUDE_TOOL_INPUT_FILE_PATH` does not exist in Claude Code. File paths must be parsed from stdin JSON as shown above.
 
 ### Gemini CLI
 
