@@ -20,6 +20,7 @@ import json
 import os
 import sqlite3
 import struct
+import threading
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -52,7 +53,10 @@ class VectorStore:
             self.db_path = Path(env).expanduser() if env else DEFAULT_DB
 
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        self._conn: Optional[sqlite3.Connection] = None
+        # Per-thread connections: each thread gets its own sqlite3.Connection so
+        # we never share a connection across threads (SQLite connections are not
+        # thread-safe for concurrent use).
+        self._local = threading.local()
         self._vec_available = False
         self._vec_dim: Optional[int] = None
         self._init_db()
@@ -62,11 +66,23 @@ class VectorStore:
     # ----------------------------------------------------------------------- #
 
     def _conn_(self) -> sqlite3.Connection:
-        if self._conn is None:
-            self._conn = sqlite3.connect(str(self.db_path))
-            self._conn.row_factory = sqlite3.Row
-            self._conn.execute("PRAGMA journal_mode=WAL")
-        return self._conn
+        conn = getattr(self._local, "conn", None)
+        if conn is None:
+            conn = sqlite3.connect(str(self.db_path))
+            conn.row_factory = sqlite3.Row
+            conn.execute("PRAGMA journal_mode=WAL")
+            # Each thread's connection must load the sqlite-vec extension
+            # independently — extensions are per-connection, not per-file.
+            if self._vec_available:
+                try:
+                    conn.enable_load_extension(True)
+                    import sqlite_vec
+                    sqlite_vec.load(conn)
+                    conn.enable_load_extension(False)
+                except Exception:
+                    pass
+            self._local.conn = conn
+        return conn
 
     # ----------------------------------------------------------------------- #
     #  Schema bootstrap                                                         #
@@ -734,9 +750,10 @@ class VectorStore:
         }
 
     def close(self):
-        if self._conn:
-            self._conn.close()
-            self._conn = None
+        conn = getattr(self._local, "conn", None)
+        if conn:
+            conn.close()
+            self._local.conn = None
 
     def __enter__(self):
         return self
@@ -773,11 +790,14 @@ def _learning_row(row) -> Dict:
 # --------------------------------------------------------------------------- #
 
 _store: Optional[VectorStore] = None
+_store_lock = threading.Lock()
 
 
 def get_store(db_path: Optional[str] = None) -> VectorStore:
-    """Return the global VectorStore singleton."""
+    """Return the global VectorStore singleton (thread-safe)."""
     global _store
     if _store is None:
-        _store = VectorStore(db_path)
+        with _store_lock:
+            if _store is None:  # double-checked: re-test inside the lock
+                _store = VectorStore(db_path)
     return _store

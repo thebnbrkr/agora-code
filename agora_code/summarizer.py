@@ -17,22 +17,26 @@ from __future__ import annotations
 
 import json
 import re
+import threading
 from typing import Optional
 
 
 # ── Token estimation ──────────────────────────────────────────────────────────
 
 _tiktoken_enc = None
+_tiktoken_lock = threading.Lock()
 
 
 def _get_tiktoken_encoder():
     global _tiktoken_enc
     if _tiktoken_enc is None:
-        try:
-            import tiktoken
-            _tiktoken_enc = tiktoken.get_encoding("cl100k_base")
-        except (ImportError, Exception):
-            _tiktoken_enc = False
+        with _tiktoken_lock:
+            if _tiktoken_enc is None:  # double-checked inside lock
+                try:
+                    import tiktoken
+                    _tiktoken_enc = tiktoken.get_encoding("cl100k_base")
+                except (ImportError, Exception):
+                    _tiktoken_enc = False
     return _tiktoken_enc if _tiktoken_enc is not False else None
 
 
