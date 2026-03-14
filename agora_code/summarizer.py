@@ -498,11 +498,122 @@ def _summarize_text(content: str, file_path: str) -> str:
 #  Generic fallback                                                            #
 # --------------------------------------------------------------------------- #
 
+def measure_quality(content: str, file_path: str, summary: str) -> dict:
+    """
+    Measure summary quality by checking how many code symbols survive.
+
+    Returns dict with total_symbols, preserved, quality_pct, missing.
+    Works for any language via regex symbol extraction.
+    """
+    symbol_patterns = [
+        re.compile(r"(?:def|func|fn|function)\s+(\w+)\s*\(", re.MULTILINE),
+        re.compile(r"(?:class|struct|interface|trait|enum)\s+(\w+)", re.MULTILINE),
+        re.compile(r"(?:pub|export|public|private|protected)\s+(?:static\s+)?(?:\w+\s+)?(\w+)\s*\(", re.MULTILINE),
+    ]
+
+    symbols: set[str] = set()
+    for pat in symbol_patterns:
+        for m in pat.finditer(content):
+            name = m.group(1)
+            if len(name) > 1 and not name.isupper():
+                symbols.add(name)
+
+    if not symbols:
+        return {"total_symbols": 0, "preserved": 0, "quality_pct": 100.0, "missing": []}
+
+    summary_lower = summary.lower()
+    preserved = [s for s in symbols if s.lower() in summary_lower]
+    missing = [s for s in symbols if s.lower() not in summary_lower]
+
+    pct = round(len(preserved) / len(symbols) * 100, 1) if symbols else 100.0
+
+    return {
+        "total_symbols": len(symbols),
+        "preserved": len(preserved),
+        "quality_pct": pct,
+        "missing": sorted(missing),
+    }
+
+
 def _summarize_generic(content: str, file_path: str) -> str:
-    """Fallback: head + tail + line count."""
-    lines = content.splitlines()
-    n = len(lines)
-    head = "\n".join(lines[:10])
-    tail = "\n".join(lines[-5:]) if n > 15 else ""
-    middle = f"\n... ({n - 15} lines omitted) ...\n" if n > 15 else ""
-    return f"{head}{middle}{tail}"
+    """Language-agnostic fallback: regex for common patterns across all languages."""
+    parts: list[str] = []
+
+    func_patterns = [
+        re.compile(r"^\s*(?:pub\s+)?(?:async\s+)?(?:fn|func|def)\s+(\w+)\s*\(([^)]*)\)", re.MULTILINE),
+        re.compile(r"^\s*(?:export\s+)?(?:async\s+)?function\s+(\w+)\s*\(([^)]*)\)", re.MULTILINE),
+        re.compile(r"^\s*(?:public|private|protected|internal)\s+(?:static\s+)?(?:async\s+)?(?:\w+(?:<[^>]+>)?)\s+(\w+)\s*\(([^)]*)\)", re.MULTILINE),
+        re.compile(r"^\s*(?:export\s+)?(?:const|let|var)\s+(\w+)\s*=\s*(?:async\s+)?\(?([^)]*)\)?\s*=>", re.MULTILINE),
+    ]
+
+    functions: list[str] = []
+    for pat in func_patterns:
+        for m in pat.finditer(content):
+            name = m.group(1)
+            args = m.group(2).strip() if m.group(2) else ""
+            args_short = args[:60] + "..." if len(args) > 60 else args
+            sig = f"{name}({args_short})"
+            if sig not in functions:
+                functions.append(sig)
+
+    class_patterns = [
+        re.compile(r"^\s*(?:pub\s+)?(?:abstract\s+)?(?:class|struct|interface|trait|enum|type)\s+(\w+)", re.MULTILINE),
+        re.compile(r"^\s*(?:export\s+)?(?:abstract\s+)?(?:class|interface|type|enum)\s+(\w+)", re.MULTILINE),
+        re.compile(r"^\s*(?:public|private|protected|internal)\s+(?:abstract\s+)?(?:partial\s+)?(?:class|struct|interface|enum|record)\s+(\w+)", re.MULTILINE),
+    ]
+
+    classes: list[str] = []
+    for pat in class_patterns:
+        for m in pat.finditer(content):
+            name = m.group(1)
+            if name not in classes:
+                classes.append(name)
+
+    impl_re = re.compile(r"^\s*impl(?:<[^>]+>)?\s+(\w+)(?:\s+for\s+(\w+))?", re.MULTILINE)
+    impls: list[str] = []
+    for m in impl_re.finditer(content):
+        target = m.group(2) or m.group(1)
+        trait_name = m.group(1) if m.group(2) else None
+        desc = f"impl {m.group(1)} for {m.group(2)}" if trait_name else f"impl {m.group(1)}"
+        if desc not in impls:
+            impls.append(desc)
+
+    import_patterns = [
+        re.compile(r"^\s*(?:use|import|require|include|using)\s+(.+?)(?:;|\s*$)", re.MULTILINE),
+        re.compile(r"^\s*from\s+(\S+)\s+import", re.MULTILINE),
+    ]
+    imports: list[str] = []
+    for pat in import_patterns:
+        for m in pat.finditer(content):
+            val = m.group(1).strip()
+            if val not in imports:
+                imports.append(val)
+
+    if imports:
+        shown = imports[:8]
+        extra = f" +{len(imports)-8} more" if len(imports) > 8 else ""
+        parts.append(f"Imports: {', '.join(shown)}{extra}")
+
+    if classes:
+        for c in classes[:15]:
+            parts.append(f"\nclass/struct/type {c}")
+
+    if impls:
+        for i in impls[:10]:
+            parts.append(f"  {i}")
+
+    if functions:
+        if not classes:
+            parts.append("")
+        for f in functions[:25]:
+            parts.append(f"  {f}")
+
+    if not parts:
+        lines = content.splitlines()
+        n = len(lines)
+        head = "\n".join(lines[:10])
+        tail = "\n".join(lines[-5:]) if n > 15 else ""
+        middle = f"\n... ({n - 15} lines omitted) ...\n" if n > 15 else ""
+        return f"{head}{middle}{tail}"
+
+    return "\n".join(parts)
