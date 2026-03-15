@@ -211,16 +211,23 @@ class APICallNode(_MemoryNodeBase):  # type: ignore[misc]
     def _inject_auth(self, req: urllib.request.Request) -> None:
         kind = self.auth.get("type", "").lower()
         if kind == "bearer":
-            req.add_header("Authorization", f"Bearer {self.auth['token']}")
+            token = self.auth.get("token", "")
+            if token:
+                req.add_header("Authorization", f"Bearer {token}")
         elif kind == "api-key":
-            header = self.auth.get("header", "X-API-Key")
-            req.add_header(header, self.auth["token"])
+            token = self.auth.get("token", "")
+            if token:
+                header = self.auth.get("header", "X-API-Key")
+                req.add_header(header, token)
         elif kind == "basic":
             import base64
-            creds = base64.b64encode(
-                f"{self.auth['username']}:{self.auth['password']}".encode()
-            ).decode()
-            req.add_header("Authorization", f"Basic {creds}")
+            username = self.auth.get("username", "")
+            password = self.auth.get("password", "")
+            if username and password:
+                creds = base64.b64encode(
+                    f"{username}:{password}".encode()
+                ).decode()
+                req.add_header("Authorization", f"Basic {creds}")
 
 
 # --------------------------------------------------------------------------- #

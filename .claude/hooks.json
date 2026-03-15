@@ -6,7 +6,7 @@
                 "hooks": [
                     {
                         "type": "command",
-                        "command": "agora-code inject --quiet"
+                        "command": "agora-code inject --quiet 2>/dev/null || true"
                     }
                 ]
             }
@@ -39,11 +39,11 @@
                 "hooks": [
                     {
                         "type": "command",
-                        "command": "agora-code scan . --cache --quiet"
+                        "command": "agora-code scan . --cache --quiet 2>/dev/null || true"
                     },
                     {
                         "type": "command",
-                        "command": "agora-code track-diff $CLAUDE_TOOL_INPUT_FILE_PATH"
+                        "command": "python3 -c \"import sys,json,subprocess; d=json.loads(sys.stdin.read()); fp=(d.get('tool_input') or {}).get('file_path',''); subprocess.run(['agora-code','track-diff',fp]) if fp else None\" 2>/dev/null || true"
                     }
                 ]
             }
@@ -76,7 +76,18 @@
                 "hooks": [
                     {
                         "type": "command",
-                        "command": "agora-code checkpoint --quiet"
+                        "command": "agora-code checkpoint --quiet 2>/dev/null || true"
+                    }
+                ]
+            }
+        ],
+        "Stop": [
+            {
+                "matcher": "",
+                "hooks": [
+                    {
+                        "type": "command",
+                        "command": ".claude/hooks/on-stop.sh"
                     }
                 ]
             }
@@ -87,7 +98,7 @@
                 "hooks": [
                     {
                         "type": "command",
-                        "command": "agora-code checkpoint --quiet"
+                        "command": ".claude/hooks/on-stop.sh"
                     }
                 ]
             }

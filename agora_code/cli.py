@@ -920,16 +920,24 @@ def file_history(file_path, limit):
 
 @main.command("install-hooks")
 @click.option("--force", is_flag=True, default=False, help="Overwrite existing hook")
-def install_hooks(force):
-    """Install a git post-commit hook to auto-track file changes on every commit.
+@click.option("--claude-code", "claude_code", is_flag=True, default=False,
+              help="Install Claude Code hooks (.claude/hooks.json + shell scripts)")
+def install_hooks(force, claude_code):
+    """Install hooks to auto-track file changes.
 
     \b
-    Adds .git/hooks/post-commit — fires on every commit (human or AI).
-    Captures what changed, who committed, and stores a summary per file.
+    Git post-commit hook (default):
+      agora-code install-hooks
+      agora-code install-hooks --force
 
-    agora-code install-hooks
-    agora-code install-hooks --force    # overwrite existing hook
+    Claude Code hooks:
+      agora-code install-hooks --claude-code
+      agora-code install-hooks --claude-code --force
     """
+    if claude_code:
+        _install_claude_code_hooks(force)
+        return
+
     import stat
     git_hooks_dir = Path(".git/hooks")
     if not git_hooks_dir.is_dir():
@@ -968,6 +976,236 @@ done
     _echo("   Fires on every commit — human or AI.")
     _echo("   Tracks: what changed, who committed, which branch, commit SHA.")
     _echo("   View history with: agora-code file-history <file>")
+
+
+def _install_claude_code_hooks(force: bool) -> None:
+    """Generate .claude/hooks.json and shell scripts for Claude Code integration."""
+    import shutil
+    import stat
+
+    # Detect agora-code binary path — embed it so hooks work regardless of shell PATH
+    agora_bin = shutil.which("agora-code") or "agora-code"
+
+    claude_dir = Path(".claude")
+    hooks_dir = claude_dir / "hooks"
+    hooks_json_path = claude_dir / "hooks.json"
+
+    if hooks_json_path.exists() and not force:
+        _echo("⚠️  .claude/hooks.json already exists. Use --force to overwrite.")
+        return
+
+    hooks_dir.mkdir(parents=True, exist_ok=True)
+
+    # --- hooks.json ---
+    hooks_json = f"""{{
+    "hooks": {{
+        "SessionStart": [
+            {{
+                "matcher": "",
+                "hooks": [
+                    {{
+                        "type": "command",
+                        "command": "{agora_bin} inject --quiet 2>/dev/null || true"
+                    }}
+                ]
+            }}
+        ],
+        "UserPromptSubmit": [
+            {{
+                "matcher": "",
+                "hooks": [
+                    {{
+                        "type": "command",
+                        "command": ".claude/hooks/on-prompt.sh"
+                    }}
+                ]
+            }}
+        ],
+        "PreToolUse": [
+            {{
+                "matcher": "Read",
+                "hooks": [
+                    {{
+                        "type": "command",
+                        "command": ".claude/hooks/pre-read.sh"
+                    }}
+                ]
+            }}
+        ],
+        "PostToolUse": [
+            {{
+                "matcher": "Write|Edit|MultiEdit",
+                "hooks": [
+                    {{
+                        "type": "command",
+                        "command": "{agora_bin} scan . --cache --quiet 2>/dev/null || true"
+                    }},
+                    {{
+                        "type": "command",
+                        "command": "python3 -c \\"import sys,json,subprocess; d=json.loads(sys.stdin.read()); fp=(d.get('tool_input') or {{}}).get('file_path',''); subprocess.run(['{agora_bin}','track-diff',fp]) if fp else None\\" 2>/dev/null || true"
+                    }}
+                ]
+            }}
+        ],
+        "PostToolUseFailure": [
+            {{
+                "matcher": "",
+                "hooks": [
+                    {{
+                        "type": "command",
+                        "command": ".claude/hooks/on-tool-failure.sh"
+                    }}
+                ]
+            }}
+        ],
+        "SubagentStart": [
+            {{
+                "matcher": "",
+                "hooks": [
+                    {{
+                        "type": "command",
+                        "command": ".claude/hooks/on-subagent.sh"
+                    }}
+                ]
+            }}
+        ],
+        "PreCompact": [
+            {{
+                "matcher": "",
+                "hooks": [
+                    {{
+                        "type": "command",
+                        "command": "{agora_bin} checkpoint --quiet 2>/dev/null || true"
+                    }}
+                ]
+            }}
+        ],
+        "SessionEnd": [
+            {{
+                "matcher": "",
+                "hooks": [
+                    {{
+                        "type": "command",
+                        "command": "{agora_bin} checkpoint --quiet 2>/dev/null || true"
+                    }}
+                ]
+            }}
+        ]
+    }}
+}}
+"""
+
+    # --- on-prompt.sh: recall relevant learnings on each prompt ---
+    on_prompt = f"""#!/bin/sh
+INPUT=$(cat)
+PROMPT=$(printf '%s' "$INPUT" | python3 -c "
+import sys, json
+try:
+    d = json.loads(sys.stdin.read())
+    print(d.get('prompt', ''))
+except Exception:
+    print('')
+" 2>/dev/null)
+
+if [ -z "$PROMPT" ]; then exit 0; fi
+
+LEARNINGS=$({agora_bin} recall "$PROMPT" --limit 2 2>/dev/null)
+if [ -n "$LEARNINGS" ] && ! echo "$LEARNINGS" | grep -q "No learnings match"; then
+    printf '[agora-code: relevant learnings]\\n%s\\n' "$LEARNINGS"
+fi
+exit 0
+"""
+
+    # --- pre-read.sh: summarize large files before Claude reads them ---
+    pre_read = f"""#!/bin/sh
+INPUT=$(cat)
+FILE_PATH=$(printf '%s' "$INPUT" | python3 -c "
+import sys, json
+try:
+    d = json.loads(sys.stdin.read())
+    print(d.get('file_path') or d.get('path') or '')
+except Exception:
+    print('')
+" 2>/dev/null)
+
+if [ -z "$FILE_PATH" ]; then exit 0; fi
+
+RESULT=$({agora_bin} summarize "$FILE_PATH" --json-output 2>/dev/null)
+if [ -z "$RESULT" ]; then exit 0; fi
+
+ACTION=$(printf '%s' "$RESULT" | python3 -c "
+import sys, json
+try:
+    print(json.loads(sys.stdin.read()).get('action', 'allow'))
+except Exception:
+    print('allow')
+" 2>/dev/null)
+
+if [ "$ACTION" = "summarize" ]; then
+    printf '%s' "$RESULT" | python3 -c "
+import sys, json
+d = json.loads(sys.stdin.read())
+print(d.get('summary', ''))
+print()
+print(f'[File has {{d.get(\\\"original_lines\\\", 0)}} lines — request specific line ranges for details]')
+" 2>/dev/null
+    exit 2
+fi
+exit 0
+"""
+
+    on_subagent = f"""#!/bin/sh
+cat > /dev/null
+CONTEXT=$({agora_bin} inject --quiet --level summary 2>/dev/null)
+if [ -n "$CONTEXT" ]; then
+    printf '[agora-code: parent session context]\\n%s\\n' "$CONTEXT"
+fi
+exit 0
+"""
+
+    on_tool_failure = f"""#!/bin/sh
+INPUT=$(cat)
+ERROR_INFO=$(printf '%s' "$INPUT" | python3 -c "
+import sys, json
+try:
+    d = json.loads(sys.stdin.read())
+    tool = d.get('tool_name', 'unknown')
+    err = d.get('error', '') or ''
+    ti = d.get('tool_input', {{}})
+    if isinstance(ti, str):
+        import json as j2; ti = j2.loads(ti)
+    path = ti.get('file_path') or ti.get('path') or ti.get('command') or ''
+    print(f'{{tool}} failed on {{path}}: {{err[:200]}}') if err else print('')
+except Exception:
+    print('')
+" 2>/dev/null)
+if [ -n "$ERROR_INFO" ]; then
+    {agora_bin} learn "$ERROR_INFO" --confidence hypothesis --tags tool-failure 2>/dev/null || true
+fi
+exit 0
+"""
+
+    # Write files
+    hooks_json_path.write_text(hooks_json, encoding="utf-8")
+
+    scripts = {
+        "on-prompt.sh": on_prompt,
+        "on-subagent.sh": on_subagent,
+        "on-tool-failure.sh": on_tool_failure,
+        "pre-read.sh": pre_read,
+    }
+    for name, content in scripts.items():
+        p = hooks_dir / name
+        p.write_text(content, encoding="utf-8")
+        p.chmod(p.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+
+    _echo("✅ Claude Code hooks installed:")
+    _echo(f"   {hooks_json_path}")
+    for name in scripts:
+        _echo(f"   {hooks_dir / name}")
+    _echo("")
+    _echo("   Restart Claude Code in this directory to activate.")
+    _echo(f"   agora-code binary: {agora_bin}")
 
 
 # --------------------------------------------------------------------------- #
