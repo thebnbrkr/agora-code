@@ -979,7 +979,7 @@ done
 
 
 def _install_claude_code_hooks(force: bool) -> None:
-    """Generate .claude/hooks.json and shell scripts for Claude Code integration."""
+    """Generate .claude/settings.json and shell scripts for Claude Code integration."""
     import shutil
     import stat
 
@@ -988,10 +988,10 @@ def _install_claude_code_hooks(force: bool) -> None:
 
     claude_dir = Path(".claude")
     hooks_dir = claude_dir / "hooks"
-    hooks_json_path = claude_dir / "hooks.json"
+    hooks_json_path = claude_dir / "settings.json"
 
     if hooks_json_path.exists() and not force:
-        _echo("⚠️  .claude/hooks.json already exists. Use --force to overwrite.")
+        _echo("⚠️  .claude/settings.json already exists. Use --force to overwrite.")
         return
 
     hooks_dir.mkdir(parents=True, exist_ok=True)
@@ -1080,13 +1080,24 @@ def _install_claude_code_hooks(force: bool) -> None:
                 ]
             }}
         ],
-        "SessionEnd": [
+        "PostCompact": [
             {{
                 "matcher": "",
                 "hooks": [
                     {{
                         "type": "command",
-                        "command": "{agora_bin} checkpoint --quiet 2>/dev/null || true"
+                        "command": "{agora_bin} inject --quiet 2>/dev/null || true"
+                    }}
+                ]
+            }}
+        ],
+        "Stop": [
+            {{
+                "matcher": "",
+                "hooks": [
+                    {{
+                        "type": "command",
+                        "command": ".claude/hooks/on-stop.sh"
                     }}
                 ]
             }}
@@ -1095,9 +1106,10 @@ def _install_claude_code_hooks(force: bool) -> None:
 }}
 """
 
-    # --- on-prompt.sh: recall relevant learnings on each prompt ---
+    # --- on-prompt.sh: auto-set goal + recall relevant learnings on each prompt ---
     on_prompt = f"""#!/bin/sh
 INPUT=$(cat)
+
 PROMPT=$(printf '%s' "$INPUT" | python3 -c "
 import sys, json
 try:
@@ -1109,9 +1121,31 @@ except Exception:
 
 if [ -z "$PROMPT" ]; then exit 0; fi
 
+# Auto-set goal from first substantive prompt if no goal exists yet
+CURRENT_GOAL=$({agora_bin} inject --quiet 2>/dev/null)
+if [ -z "$CURRENT_GOAL" ]; then
+    IS_SUBSTANTIVE=$(printf '%s' "$PROMPT" | python3 -c "
+import sys, re
+text = sys.stdin.read().strip()
+if len(text) < 30:
+    print('no')
+elif re.match(r'^(hi|hey|hello|ok|okay|yes|no|sure|thanks|bye|lol)\\\\b', text, re.I):
+    print('no')
+elif re.match(r'^agora-code\\\\s', text):
+    print('no')
+else:
+    print('yes')
+" 2>/dev/null)
+    if [ "$IS_SUBSTANTIVE" = "yes" ]; then
+        SHORT_GOAL=$(printf '%s' "$PROMPT" | cut -c1-120)
+        {agora_bin} checkpoint --goal "$SHORT_GOAL" --quiet 2>/dev/null || true
+    fi
+fi
+
+# Recall relevant learnings for this prompt
 LEARNINGS=$({agora_bin} recall "$PROMPT" --limit 2 2>/dev/null)
 if [ -n "$LEARNINGS" ] && ! echo "$LEARNINGS" | grep -q "No learnings match"; then
-    printf '[agora-code: relevant learnings]\\n%s\\n' "$LEARNINGS"
+    printf '[agora-code: relevant learnings for this prompt]\\n%s\\n' "$LEARNINGS"
 fi
 exit 0
 """
@@ -1163,6 +1197,82 @@ fi
 exit 0
 """
 
+    # --- on-stop.sh: digest conversation into memory on session end ---
+    on_stop = f"""#!/bin/sh
+INPUT=$(cat)
+
+# Always checkpoint first
+{agora_bin} checkpoint --quiet 2>/dev/null || true
+
+# Use last_assistant_message from hook input directly — no JSONL parsing needed
+LAST_MSG=$(printf '%s' "$INPUT" | python3 -c "
+import sys, json
+try:
+    d = json.loads(sys.stdin.read())
+    print(d.get('last_assistant_message', ''))
+except Exception:
+    print('')
+" 2>/dev/null)
+
+PROMPT=$(printf '%s' "$INPUT" | python3 -c "
+import sys, json
+try:
+    d = json.loads(sys.stdin.read())
+    print(d.get('prompt', ''))
+except Exception:
+    print('')
+" 2>/dev/null)
+
+if [ -z "$LAST_MSG" ]; then exit 0; fi
+
+python3 - "$LAST_MSG" "$PROMPT" << 'EOF'
+import sys, subprocess, shutil, re
+
+last_msg = sys.argv[1].strip()
+prompt = sys.argv[2].strip() if len(sys.argv) > 2 else ''
+
+FILLER = re.compile(
+    r'^(hi|hey|hello|ok|okay|yes|no|sure|thanks|bye|lol|cool|great|nice|yep|nope|got it)\\b',
+    re.I
+)
+
+def is_substantive(text):
+    t = text.strip()
+    if len(t) < 30:
+        return False
+    if FILLER.match(t):
+        return False
+    if t.startswith("agora-code "):
+        return False
+    return True
+
+if not is_substantive(last_msg):
+    sys.exit(0)
+
+agora_bin = shutil.which("agora-code") or "agora-code"
+
+# Build summary from prompt (goal) + Claude's first meaningful line (finding)
+first_line = last_msg.split('\\n')[0][:150].strip()
+summary_parts = []
+if prompt and is_substantive(prompt):
+    summary_parts.append(f"Session goal: {{prompt[:120]}}")
+if first_line:
+    summary_parts.append(f"Claude found: {{first_line}}")
+
+if not summary_parts:
+    sys.exit(0)
+
+summary = " — ".join(summary_parts)
+
+subprocess.run(
+    [agora_bin, "learn", summary, "--confidence", "confirmed", "--tags", "conversation-summary"],
+    capture_output=True
+)
+EOF
+
+exit 0
+"""
+
     on_tool_failure = f"""#!/bin/sh
 INPUT=$(cat)
 ERROR_INFO=$(printf '%s' "$INPUT" | python3 -c "
@@ -1190,6 +1300,7 @@ exit 0
 
     scripts = {
         "on-prompt.sh": on_prompt,
+        "on-stop.sh": on_stop,
         "on-subagent.sh": on_subagent,
         "on-tool-failure.sh": on_tool_failure,
         "pre-read.sh": pre_read,
