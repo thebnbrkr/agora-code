@@ -48,10 +48,6 @@
         "hooks": [
           {
             "type": "command",
-            "command": "agora-code scan . --cache --quiet 2>/dev/null || true"
-          },
-          {
-            "type": "command",
             "command": ".claude/hooks/on-edit.sh"
           }
         ]
