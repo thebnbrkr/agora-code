@@ -5,7 +5,5 @@
   "author": {
     "name": "agora-code contributors"
   },
-  "keywords": ["memory", "session", "context", "api-discovery", "persistence"],
-  "skills": "skills",
-  "hooks": "hooks/hooks.json"
+  "keywords": ["memory", "session", "context", "api-discovery", "persistence"]
 }
