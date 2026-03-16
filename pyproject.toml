@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "agora-code"
 version = "0.1.0"
-description = "Scan any codebase. Turn it into an agent."
+description = "Persistent session memory and symbol indexing for AI coding agents"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }

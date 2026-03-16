@@ -1,32 +1,46 @@
-# agora-memory — Agent Skills Reference
+# agora-code — MCP Tools Reference
 
-## When to use each tool
+> **Claude Code users:** hooks handle everything automatically after `agora-code install-hooks --claude-code`.
+> This file documents the MCP server tools for **Cursor / Claude Desktop** users.
 
-| Tool | USE WHEN |
+## MCP server setup
+
+```bash
+agora-code memory-server   # starts JSON-RPC server on stdio
+```
+
+Add to your editor's MCP config:
+```json
+{"mcpServers": {"agora-code": {"command": "agora-code", "args": ["memory-server"]}}}
+```
+
+## MCP tool reference
+
+| Tool | When to use |
 |---|---|
-| `get_session_context` | Starting a new chat or task — always call this first |
-| `save_checkpoint` | After completing a meaningful step, before switching tasks, or when context window is filling |
-| `store_learning` | You discover something non-obvious: a bug, gotcha, pattern, or decision the team should remember |
-| `recall_learnings` | Before starting something that might have been solved before, or when debugging unexpected behaviour |
-| `recall_file_history` | Starting work on a file — see what changed across past sessions without reading the whole file |
-| `complete_session` | Task is fully done and you want to archive it to long-term memory |
-| `list_sessions` | User asks what was worked on before, or you need to find a past session |
-| `store_team_learning` | Finding applies to everyone on the team (shared conventions, API quirks, deployment gotchas) |
-| `recall_team` | Looking for shared team knowledge, or user asks "has anyone figured out X?" |
-| `get_memory_stats` | Debugging or curious about storage usage |
+| `get_session_context` | Start of every chat — loads last checkpoint, recent learnings, git state |
+| `save_checkpoint` | After completing a meaningful step |
+| `store_learning` | Non-obvious finding: bug, gotcha, architectural decision |
+| `recall_learnings` | Before starting something — check if it was solved before |
+| `get_file_symbols` | Get all indexed functions/classes for a file with line numbers + code blocks |
+| `search_symbols` | Search across all indexed symbols by name or description |
+| `recall_file_history` | See what changed in a file across past sessions |
+| `complete_session` | Archive session to long-term memory when done |
+| `list_sessions` | Find past sessions |
+| `get_memory_stats` | DB usage stats |
 
-## Session lifecycle
+## MCP session lifecycle
 
 ```
-Session start  → get_session_context()          # what was I doing?
-Working        → save_checkpoint(...)            # periodic saves
-Discovery      → store_learning(...)             # non-obvious findings
-Done           → complete_session(summary=...)   # archive
+Start   → get_session_context()       # loads last checkpoint
+Working → save_checkpoint(...)        # periodic saves
+Finding → store_learning(...)         # non-obvious discoveries
+Done    → complete_session(...)       # archive
 ```
 
-## Tips
+## Notes
 
-- `save_checkpoint` needs at minimum one of: `goal`, `hypothesis`, `action`, `files_changed`
-- `store_learning` confidence levels: `confirmed` (tested), `likely` (strong evidence), `hypothesis` (untested)  
-- File history is populated automatically via PostToolUse hooks — no manual action needed
-- Team learnings persist across all projects and agents sharing the same DB path
+- All queries are isolated by `project_id` (git remote URL) and `branch`
+- `get_file_symbols` auto-indexes if not cached — returns `symbol_name`, `start_line`, `end_line`, `signature`, `note`, `code_block`
+- `search_symbols` uses FTS5 BM25 — supports multi-word queries across name + signature + note
+- `store_learning` confidence levels: `confirmed`, `likely`, `hypothesis`

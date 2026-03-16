@@ -1,69 +1,33 @@
 {
   "hooks": {
-  "SessionStart": [
-    {
-      "hooks": [
-        {
-          "type": "command",
-          "command": "agora-code inject --quiet 2>/dev/null || true"
-        }
-      ]
-    }
-  ],
-  "UserPromptSubmit": [
-    {
-      "hooks": [
-        {
-          "type": "command",
-          "command": "${CLAUDE_PLUGIN_ROOT}/hooks/on-prompt.sh"
-        }
-      ]
-    }
-  ],
-  "PostToolUse": [
-    {
-      "matcher": "Write|Edit|MultiEdit",
-      "hooks": [
-        {
-          "type": "command",
-          "command": "agora-code scan . --cache --quiet 2>/dev/null || true"
-        },
-        {
-          "type": "command",
-          "command": "python3 -c \"import sys,json,subprocess; d=json.loads(sys.stdin.read()); fp=(d.get('tool_input') or {}).get('file_path',''); subprocess.run(['agora-code','track-diff',fp]) if fp else None\" 2>/dev/null || true"
-        }
-      ]
-    }
-  ],
-  "PreCompact": [
-    {
-      "hooks": [
-        {
-          "type": "command",
-          "command": "agora-code checkpoint --quiet 2>/dev/null || true"
-        }
-      ]
-    }
-  ],
-  "PostCompact": [
-    {
-      "hooks": [
-        {
-          "type": "command",
-          "command": "agora-code inject --quiet 2>/dev/null || true"
-        }
-      ]
-    }
-  ],
-  "Stop": [
-    {
-      "hooks": [
-        {
-          "type": "command",
-          "command": "${CLAUDE_PLUGIN_ROOT}/hooks/on-stop.sh"
-        }
-      ]
-    }
-  ]
+    "SessionStart": [
+      {"matcher": "", "hooks": [{"type": "command", "command": "agora-code inject --quiet 2>/dev/null || true"}]}
+    ],
+    "UserPromptSubmit": [
+      {"matcher": "", "hooks": [{"type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/hooks/on-prompt.sh"}]}
+    ],
+    "PreToolUse": [
+      {"matcher": "Read", "hooks": [{"type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/hooks/pre-read.sh"}]}
+    ],
+    "PostToolUse": [
+      {"matcher": "Read", "hooks": [{"type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/hooks/on-read.sh"}]},
+      {"matcher": "Write|Edit|MultiEdit", "hooks": [{"type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/hooks/on-edit.sh"}]},
+      {"matcher": "Bash", "hooks": [{"type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/hooks/on-bash.sh"}]}
+    ],
+    "PostToolUseFailure": [
+      {"matcher": "", "hooks": [{"type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/hooks/on-tool-failure.sh"}]}
+    ],
+    "SubagentStart": [
+      {"matcher": "", "hooks": [{"type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/hooks/on-subagent.sh"}]}
+    ],
+    "PreCompact": [
+      {"matcher": "", "hooks": [{"type": "command", "command": "agora-code checkpoint --quiet 2>/dev/null || true"}]}
+    ],
+    "PostCompact": [
+      {"matcher": "", "hooks": [{"type": "command", "command": "agora-code inject --quiet 2>/dev/null || true"}]}
+    ],
+    "Stop": [
+      {"matcher": "", "hooks": [{"type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/hooks/on-stop.sh"}]}
+    ]
   }
 }
