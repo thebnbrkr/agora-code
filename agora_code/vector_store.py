@@ -889,20 +889,22 @@ class VectorStore:
         now = _now()
         updated = 0
         for fp in file_paths:
+            # Match both absolute (/path/to/repo/file.py) and relative (file.py) stored paths
+            like_pat = f"%{fp}"
             r = conn.execute("""
                 UPDATE file_changes
                 SET commit_sha=?, status='committed', committed_at=?
-                WHERE file_path=? AND status='uncommitted'
+                WHERE file_path LIKE ? AND status='uncommitted'
                   AND (project_id=? OR project_id IS NULL)
-            """, (commit_sha, now, fp, project_id))
+            """, (commit_sha, now, like_pat, project_id))
             updated += r.rowcount
             conn.execute("""
                 UPDATE symbol_notes
                 SET commit_sha=?
-                WHERE file_path=?
+                WHERE file_path LIKE ?
                   AND (project_id=? OR project_id IS NULL)
                   AND (branch=? OR branch IS NULL)
-            """, (commit_sha, fp, project_id, branch))
+            """, (commit_sha, like_pat, project_id, branch))
         conn.commit()
         return updated
 
