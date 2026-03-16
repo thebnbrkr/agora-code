@@ -58,9 +58,9 @@ agora-code solves this with three layers:
 └─────────────────────────────────────────────────────────┘
 ```
 
-### Claude Code-specific features (this fork)
+### Claude Code-specific features
 
-This fork extends agora-code with deeper Claude Code integration via three additional hooks:
+agora-code includes deeper Claude Code integration via three additional hooks:
 
 **Per-prompt recall** (`UserPromptSubmit`): On every user message, agora-code searches stored learnings for anything relevant and injects matches as context — before Claude even starts thinking.
 
@@ -126,8 +126,9 @@ The easiest way to use agora-code with Claude Code. Install once and it works in
 # 1. Install the CLI
 pip install git+https://github.com/thebnbrkr/agora-code
 
-# 2. Install the Claude Code plugin (user scope = all projects)
-claude plugin install https://github.com/thebnbrkr/agora-code --scope user
+# 2. Register the marketplace and install the plugin (user scope = all projects)
+claude plugin marketplace add thebnbrkr/agora-code
+claude plugin install agora-code@agora-code --scope user
 ```
 
 After this, every Claude Code session automatically:
