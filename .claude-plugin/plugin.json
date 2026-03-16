@@ -1,0 +1,11 @@
+{
+  "name": "agora-code",
+  "version": "0.1.0",
+  "description": "Persistent memory and API discovery for Claude Code — auto-injects session context, tracks file changes, and checkpoints before compaction.",
+  "author": {
+    "name": "agora-code contributors"
+  },
+  "keywords": ["memory", "session", "context", "api-discovery", "persistence"],
+  "skills": "skills",
+  "hooks": "hooks/hooks.json"
+}
