@@ -646,6 +646,8 @@ def _build_recalled_context(project_id: Optional[str] = None) -> Optional[str]:
             SELECT finding, type, confidence FROM learnings
             WHERE (project_id = ? OR project_id IS NULL)
               AND (tags NOT LIKE '%checkpoint%' OR tags IS NULL)
+              AND (tags NOT LIKE '%conversation-summary%')
+              AND (tags NOT LIKE '%tool-failure%')
             ORDER BY timestamp DESC LIMIT ?
         """, (pid, learnings_k)).fetchall()
 
