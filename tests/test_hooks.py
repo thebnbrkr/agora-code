@@ -217,6 +217,28 @@ def test_inject_without_quiet_still_works():
     assert result.returncode == 0
 
 
+def test_inject_quiet_outputs_context_when_session_exists(tmp_path):
+    """inject --quiet should still print context when a session/learnings exist.
+
+    Previously the flag suppressed all output, breaking hooks that capture
+    stdout like: CONTEXT=$(agora-code inject --quiet)
+    """
+    db_path = str(tmp_path / "memory.db")
+    env = {"AGORA_CODE_DB": db_path}
+
+    # Seed a learning via the CLI so the DB schema is fully initialised
+    seed = _run_cli("learn", "test finding for quiet flag", env_override=env)
+    assert seed.returncode == 0, f"learn seeding failed: {seed.stderr}"
+
+    result = _run_cli("inject", "--quiet", env_override=env)
+    assert result.returncode == 0
+    # --quiet should only suppress "no session" errors, not actual context output
+    assert result.stdout.strip() != "", (
+        "--quiet must not suppress context output; hooks rely on stdout. "
+        f"Got stdout={result.stdout!r} stderr={result.stderr!r}"
+    )
+
+
 def test_scan_quiet_suppresses_output():
     """--quiet should produce no stdout when scan runs."""
     result = _run_cli("scan", ".", "--quiet")

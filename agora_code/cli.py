@@ -561,8 +561,10 @@ def inject(level, token_budget, raw, quiet):
 
     # Always build fresh — never serve stale cache from session.json
     recalled = _build_recalled_context()
-    if recalled and not quiet:
+    if recalled:
         click.echo(recalled)
+    elif not quiet:
+        click.echo("No session context found.", err=True)
 
 
 
