@@ -1,0 +1,21 @@
+{
+  "name": "agora-code",
+  "owner": {
+    "name": "agora-code contributors"
+  },
+  "metadata": {
+    "description": "Persistent memory and API discovery for Claude Code"
+  },
+  "plugins": [
+    {
+      "name": "agora-code",
+      "source": "./",
+      "description": "Persistent memory and API discovery for Claude Code — auto-injects session context, recalls relevant learnings on every prompt, and digests conversations into searchable memory.",
+      "version": "0.1.0",
+      "author": {
+        "name": "agora-code contributors"
+      },
+      "keywords": ["memory", "session", "context", "api-discovery", "persistence"]
+    }
+  ]
+}

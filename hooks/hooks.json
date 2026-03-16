@@ -4,17 +4,17 @@
       "hooks": [
         {
           "type": "command",
-          "command": "agora-code inject --quiet"
+          "command": "agora-code inject --quiet 2>/dev/null || true"
         }
       ]
     }
   ],
-  "PreCompact": [
+  "UserPromptSubmit": [
     {
       "hooks": [
         {
           "type": "command",
-          "command": "agora-code checkpoint --quiet"
+          "command": "${CLAUDE_PLUGIN_ROOT}/hooks/on-prompt.sh"
         }
       ]
     }
@@ -25,7 +25,41 @@
       "hooks": [
         {
           "type": "command",
-          "command": "agora-code scan . --cache --quiet"
+          "command": "agora-code scan . --cache --quiet 2>/dev/null || true"
+        },
+        {
+          "type": "command",
+          "command": "python3 -c \"import sys,json,subprocess; d=json.loads(sys.stdin.read()); fp=(d.get('tool_input') or {}).get('file_path',''); subprocess.run(['agora-code','track-diff',fp]) if fp else None\" 2>/dev/null || true"
+        }
+      ]
+    }
+  ],
+  "PreCompact": [
+    {
+      "hooks": [
+        {
+          "type": "command",
+          "command": "agora-code checkpoint --quiet 2>/dev/null || true"
+        }
+      ]
+    }
+  ],
+  "PostCompact": [
+    {
+      "hooks": [
+        {
+          "type": "command",
+          "command": "agora-code inject --quiet 2>/dev/null || true"
+        }
+      ]
+    }
+  ],
+  "Stop": [
+    {
+      "hooks": [
+        {
+          "type": "command",
+          "command": "${CLAUDE_PLUGIN_ROOT}/hooks/on-stop.sh"
         }
       ]
     }
