@@ -118,6 +118,7 @@ def index_file(
     if not symbols:
         return 0
 
+    source_lines = content.splitlines()
     rows = [
         {
             "file_path": file_path,
@@ -127,6 +128,7 @@ def index_file(
             "end_line": s.get("end_line"),
             "signature": s.get("signature"),
             "note": s.get("note"),
+            "code_block": _extract_code_block(source_lines, s.get("start_line"), s.get("end_line")),
             "project_id": project_id,
             "branch": branch,
             "commit_sha": commit_sha,
@@ -402,6 +404,22 @@ def _first_docstring(lines: list[str], def_line: int) -> str:
                     text = text.split(q)[0].strip()
                     return text[:120] if text else ""
     return ""
+
+
+def _extract_code_block(lines: list[str], start_line: Optional[int], end_line: Optional[int]) -> Optional[str]:
+    """Slice source lines for a symbol. Caps at 120 lines / 6000 chars to keep storage sane."""
+    if start_line is None:
+        return None
+    # Convert 1-based line numbers to 0-based indices
+    start = max(0, start_line - 1)
+    end = min(len(lines), (end_line or start_line + 50))
+    # Cap at 120 lines
+    end = min(end, start + 120)
+    block = "\n".join(lines[start:end])
+    # Cap at 6000 chars
+    if len(block) > 6000:
+        block = block[:6000] + "\n# ... (truncated)"
+    return block or None
 
 
 def _symbols_to_json(symbols: list[dict]) -> str:

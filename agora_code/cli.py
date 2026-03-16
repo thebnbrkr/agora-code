@@ -548,37 +548,21 @@ def inject(level, token_budget, raw, quiet):
         agora-code inject --raw      # full session JSON
     """
     from agora_code.session import (
-        load_session_if_recent, load_session, update_session,
+        load_session_if_recent, load_session,
         _build_recalled_context,
     )
-    from agora_code.compress import compress_session, auto_compress_session, session_restored_banner
-
-    session = load_session_if_recent(max_age_hours=48) or load_session()
-    if not session:
-        # No active session — try to pull context from DB for a clean start
-        recalled = _build_recalled_context()
-        if recalled and not quiet:
-            click.echo(recalled)
-        return
-
-    # Auto-populate context field once per session from DB if empty
-    if not session.get("context"):
-        recalled = _build_recalled_context()
-        if recalled:
-            session = update_session({"context": recalled})
 
     if raw:
-        import json as _json
-        click.echo(_json.dumps(session, indent=2))
+        session = load_session_if_recent(max_age_hours=48) or load_session()
+        if session:
+            import json as _json
+            click.echo(_json.dumps(session, indent=2))
         return
 
-    if level is None:
-        # No level specified — auto-pick highest detail that fits under budget
-        text = auto_compress_session(session, token_budget=token_budget)
-    else:
-        text = compress_session(session, level=level)
-
-    click.echo(text)   # plain echo — no emoji, goes straight to agent context
+    # Always build fresh — never serve stale cache from session.json
+    recalled = _build_recalled_context()
+    if recalled and not quiet:
+        click.echo(recalled)
 
 
 
@@ -996,7 +980,7 @@ def _install_claude_code_hooks(force: bool) -> None:
 
     hooks_dir.mkdir(parents=True, exist_ok=True)
 
-    # --- hooks.json ---
+    # --- settings.json ---
     hooks_json = f"""{{
     "hooks": {{
         "SessionStart": [
@@ -1034,15 +1018,29 @@ def _install_claude_code_hooks(force: bool) -> None:
         ],
         "PostToolUse": [
             {{
+                "matcher": "Read",
+                "hooks": [
+                    {{
+                        "type": "command",
+                        "command": ".claude/hooks/on-read.sh"
+                    }}
+                ]
+            }},
+            {{
                 "matcher": "Write|Edit|MultiEdit",
                 "hooks": [
                     {{
                         "type": "command",
-                        "command": "{agora_bin} scan . --cache --quiet 2>/dev/null || true"
-                    }},
+                        "command": ".claude/hooks/on-edit.sh"
+                    }}
+                ]
+            }},
+            {{
+                "matcher": "Bash",
+                "hooks": [
                     {{
                         "type": "command",
-                        "command": "python3 -c \\"import sys,json,subprocess; d=json.loads(sys.stdin.read()); fp=(d.get('tool_input') or {{}}).get('file_path',''); subprocess.run(['{agora_bin}','track-diff',fp]) if fp else None\\" 2>/dev/null || true"
+                        "command": ".claude/hooks/on-bash.sh"
                     }}
                 ]
             }}
@@ -1295,11 +1293,164 @@ fi
 exit 0
 """
 
+    # --- on-read.sh: auto-index symbols after Claude reads a code file ---
+    on_read = f"""#!/bin/sh
+INPUT=$(cat)
+python3 - << 'PYEOF'
+import sys, json, os
+
+try:
+    import select
+    data = sys.stdin.read() if select.select([sys.stdin], [], [], 0)[0] else ''
+except Exception:
+    data = ''
+
+try:
+    d = json.loads(data) if data else {{}}
+except Exception:
+    d = {{}}
+
+file_path = (d.get('tool_input') or {{}}).get('file_path', '')
+if not file_path or not os.path.isfile(file_path):
+    sys.exit(0)
+
+CODE_EXTS = {{'.py','.js','.ts','.jsx','.tsx','.go','.rs','.java','.c','.cpp','.cs','.rb','.swift','.kt','.php'}}
+if not any(file_path.endswith(e) for e in CODE_EXTS):
+    sys.exit(0)
+
+try:
+    from agora_code.session import _get_project_id, _get_git_branch, _get_commit_sha
+    project_id = _get_project_id()
+    branch = _get_git_branch()
+    commit_sha = _get_commit_sha()
+except Exception:
+    project_id = branch = commit_sha = None
+
+# Skip if already indexed at this commit
+if commit_sha:
+    try:
+        import sqlite3
+        db_path = os.path.expanduser(os.environ.get('AGORA_CODE_DB', '~/.agora-code/memory.db'))
+        conn = sqlite3.connect(db_path)
+        row = conn.execute(
+            'SELECT 1 FROM symbol_notes WHERE file_path=? AND commit_sha=? LIMIT 1',
+            (file_path, commit_sha)
+        ).fetchone()
+        conn.close()
+        if row:
+            sys.exit(0)
+    except Exception:
+        pass
+
+try:
+    from agora_code.indexer import index_file
+    index_file(file_path, project_id=project_id, branch=branch, commit_sha=commit_sha)
+except Exception:
+    pass
+
+sys.exit(0)
+PYEOF
+exit 0
+"""
+
+    # --- on-edit.sh: re-index symbols after Claude edits a file ---
+    on_edit = f"""#!/bin/sh
+INPUT=$(cat)
+python3 - << 'PYEOF'
+import sys, json, os, subprocess
+
+try:
+    import select
+    data = sys.stdin.read() if select.select([sys.stdin], [], [], 0)[0] else ''
+except Exception:
+    data = ''
+
+try:
+    d = json.loads(data) if data else {{}}
+except Exception:
+    d = {{}}
+
+file_path = (d.get('tool_input') or {{}}).get('file_path', '')
+if not file_path or not os.path.isfile(file_path):
+    sys.exit(0)
+
+CODE_EXTS = {{'.py','.js','.ts','.jsx','.tsx','.go','.rs','.java','.c','.cpp','.cs','.rb','.swift','.kt','.php'}}
+if not any(file_path.endswith(e) for e in CODE_EXTS):
+    sys.exit(0)
+
+# Track the diff
+agora_bin = '{agora_bin}'
+try:
+    subprocess.run([agora_bin, 'track-diff', file_path], capture_output=True, timeout=10)
+except Exception:
+    pass
+
+try:
+    from agora_code.session import _get_project_id, _get_git_branch
+    from agora_code.indexer import index_file
+    index_file(file_path, project_id=_get_project_id(), branch=_get_git_branch())
+except Exception:
+    pass
+
+sys.exit(0)
+PYEOF
+exit 0
+"""
+
+    # --- on-bash.sh: tag committed files when git commit detected ---
+    on_bash = f"""#!/bin/sh
+INPUT=$(cat)
+python3 - << 'PYEOF'
+import sys, json, os, subprocess
+
+try:
+    import select
+    data = sys.stdin.read() if select.select([sys.stdin], [], [], 0)[0] else ''
+except Exception:
+    data = ''
+
+try:
+    d = json.loads(data) if data else {{}}
+except Exception:
+    d = {{}}
+
+command = (d.get('tool_input') or {{}}).get('command', '')
+if 'git' not in command or 'commit' not in command:
+    sys.exit(0)
+
+try:
+    result = subprocess.run(['git','rev-parse','--short','HEAD'], capture_output=True, text=True, timeout=5)
+    commit_sha = result.stdout.strip() if result.returncode == 0 else ''
+    if not commit_sha:
+        sys.exit(0)
+    result = subprocess.run(
+        ['git','diff-tree','--no-commit-id','-r','--name-only', commit_sha],
+        capture_output=True, text=True, timeout=5
+    )
+    files = [f.strip() for f in result.stdout.splitlines() if f.strip()]
+except Exception:
+    sys.exit(0)
+
+try:
+    from agora_code.session import _get_project_id, _get_git_branch
+    from agora_code.indexer import tag_commit
+    tag_commit(commit_sha, files, project_id=_get_project_id(), branch=_get_git_branch())
+except Exception:
+    pass
+
+sys.exit(0)
+PYEOF
+exit 0
+"""
+
     # Write files
     hooks_json_path.write_text(hooks_json, encoding="utf-8")
 
     scripts = {
         "on-prompt.sh": on_prompt,
+        "on-read.sh": on_read,
+        "on-edit.sh": on_edit,
+        "on-bash.sh": on_bash,
         "on-stop.sh": on_stop,
         "on-subagent.sh": on_subagent,
         "on-tool-failure.sh": on_tool_failure,

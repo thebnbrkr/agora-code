@@ -295,6 +295,7 @@ class VectorStore:
                 end_line    INTEGER,
                 signature   TEXT,
                 note        TEXT,
+                code_block  TEXT,
                 project_id  TEXT,
                 branch      TEXT,
                 commit_sha  TEXT,
@@ -302,6 +303,11 @@ class VectorStore:
                 timestamp   TEXT NOT NULL
             )
         """)
+        # Safe migration for existing DBs
+        try:
+            conn.execute("ALTER TABLE symbol_notes ADD COLUMN code_block TEXT")
+        except Exception:
+            pass
         conn.execute("""
             CREATE UNIQUE INDEX IF NOT EXISTS idx_symbol_notes_unique
             ON symbol_notes(project_id, file_path, symbol_name, branch)
@@ -721,12 +727,13 @@ class VectorStore:
         end_line: Optional[int] = None,
         signature: Optional[str] = None,
         note: Optional[str] = None,
+        code_block: Optional[str] = None,
         project_id: Optional[str] = None,
         branch: Optional[str] = None,
         commit_sha: Optional[str] = None,
         session_id: Optional[str] = None,
     ) -> str:
-        """Insert or update a per-symbol one-liner. Unique per (project, file, symbol, branch)."""
+        """Insert or update a per-symbol one-liner + code block. Unique per (project, file, symbol, branch)."""
         conn = self._conn_()
         existing = conn.execute("""
             SELECT id FROM symbol_notes
@@ -742,19 +749,19 @@ class VectorStore:
             conn.execute("""
                 UPDATE symbol_notes
                 SET symbol_type=?, start_line=?, end_line=?, signature=?,
-                    note=?, commit_sha=?, session_id=?, timestamp=?
+                    note=?, code_block=?, commit_sha=?, session_id=?, timestamp=?
                 WHERE id=?
             """, (symbol_type, start_line, end_line, signature,
-                  note, commit_sha, session_id, now, sid))
+                  note, code_block, commit_sha, session_id, now, sid))
         else:
             sid = str(uuid.uuid4())
             conn.execute("""
                 INSERT INTO symbol_notes
                     (id, file_path, symbol_type, symbol_name, start_line, end_line,
-                     signature, note, project_id, branch, commit_sha, session_id, timestamp)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     signature, note, code_block, project_id, branch, commit_sha, session_id, timestamp)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (sid, file_path, symbol_type, symbol_name, start_line, end_line,
-                  signature, note, project_id, branch, commit_sha, session_id, now))
+                  signature, note, code_block, project_id, branch, commit_sha, session_id, now))
         conn.commit()
         return sid
 
@@ -768,6 +775,7 @@ class VectorStore:
                 end_line=s.get("end_line"),
                 signature=s.get("signature"),
                 note=s.get("note"),
+                code_block=s.get("code_block"),
                 project_id=s.get("project_id"),
                 branch=s.get("branch"),
                 commit_sha=s.get("commit_sha"),
