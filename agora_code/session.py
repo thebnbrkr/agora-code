@@ -575,58 +575,121 @@ def _ensure_gitignore(agora_dir: Path) -> None:
 
 def _build_recalled_context(project_id: Optional[str] = None) -> Optional[str]:
     """
-    Query the DB for past session + learnings to auto-populate a session's
-    context field at session start.
+    Build structured inject context from DB + git.
 
-    Called once per new session when context is empty. The result is written
-    back into session.json so subsequent inject calls just read the file —
-    zero DB queries after the first call.
-
-    Returns a formatted string or None if nothing useful found.
+    Output sections (most-signal-first, target ~350 tokens total):
+      1. Last checkpoint  — goal, decisions, next_steps, blockers
+      2. Recent learnings — type-tagged, non-checkpoint findings
+      3. Git log          — last 5 commits (always fresh)
+      4. Uncommitted files
+      5. Symbol index     — one-liners for recently touched files
     """
+    import json as _json
+    import subprocess as _sp
+
     try:
         from agora_code.vector_store import get_store
         store = get_store()
         pid = project_id or _get_project_id()
+        branch = _get_git_branch()
         parts: List[str] = []
 
-        # Most recent session for this project (any status — including completed)
-        past = store.load_most_recent_session(
-            max_age_hours=168.0,  # 7 days
+        # ── 1. Last structured checkpoint ────────────────────────────────────
+        checkpoints = store.search_learnings_keyword(
+            "", k=1,
             project_id=pid,
-            status=None,
+            type="finding",      # checkpoints stored as finding type
         )
-        if past and past.get("goal"):
-            goal = past.get("goal", "")
-            summary = past.get("summary") or past.get("current_action") or ""
-            next_steps = past.get("next_steps", [])
-            parts.append(f"Last session goal: {goal}")
-            if summary:
-                parts.append(f"Status: {summary}")
-            if next_steps:
-                steps = next_steps[:2]
-                parts.append("Pending: " + "; ".join(steps))
+        # filter to actual checkpoint learnings by tag
+        raw_checkpoints = store._conn_().execute("""
+            SELECT finding, evidence FROM learnings
+            WHERE (project_id = ? OR project_id IS NULL)
+              AND tags LIKE '%checkpoint%'
+            ORDER BY timestamp DESC LIMIT 1
+        """, (pid,)).fetchone()
 
-        # Top learnings for this project
-        learnings_k = int(os.environ.get("AGORA_INJECT_LEARNINGS_K", "3"))
-        learnings = store.search_learnings_keyword("", k=learnings_k, project_id=pid)
+        if raw_checkpoints:
+            finding = raw_checkpoints[0] or ""
+            evidence_raw = raw_checkpoints[1] or ""
+            try:
+                ev = _json.loads(evidence_raw)
+                cp_goal = ev.get("goal", "")
+                cp_decisions = ev.get("decisions", [])
+                cp_next = ev.get("next_steps", [])
+                cp_blockers = ev.get("blockers", [])
+                cp_files = ev.get("files_touched", [])
+                cp_branch = ev.get("branch", "")
+                cp_commit = ev.get("commit_sha", "")
+
+                section = ["LAST CHECKPOINT"]
+                if cp_goal:
+                    section.append(f"  goal:      {cp_goal[:120]}")
+                if cp_decisions:
+                    section.append("  decisions: " + "; ".join(d[:80] for d in cp_decisions[:3]))
+                if cp_next:
+                    section.append("  next:      " + "; ".join(n[:80] for n in cp_next[:3]))
+                if cp_blockers:
+                    section.append("  blockers:  " + "; ".join(b[:80] for b in cp_blockers[:2]))
+                if cp_files:
+                    section.append("  files:     " + ", ".join(cp_files[:6]))
+                if cp_branch or cp_commit:
+                    section.append(f"  branch:    {cp_branch}  commit: {cp_commit}")
+                parts.append("\n".join(section))
+            except Exception:
+                # evidence wasn't JSON — fall back to raw finding text
+                if finding:
+                    parts.append(f"LAST CHECKPOINT\n  {finding[:200]}")
+
+        # ── 2. Recent non-checkpoint learnings (decisions, findings, blockers) ─
+        learnings_k = int(os.environ.get("AGORA_INJECT_LEARNINGS_K", "4"))
+        learnings = store._conn_().execute("""
+            SELECT finding, type, confidence FROM learnings
+            WHERE (project_id = ? OR project_id IS NULL)
+              AND (tags NOT LIKE '%checkpoint%' OR tags IS NULL)
+            ORDER BY timestamp DESC LIMIT ?
+        """, (pid, learnings_k)).fetchall()
+
         if learnings:
-            parts.append("Stored learnings:")
+            TYPE_ICON = {"decision": "→", "blocker": "!", "next_step": "»", "finding": "·"}
+            section = ["LEARNINGS"]
             for lr in learnings:
-                conf = {"confirmed": "✓", "likely": "~", "hypothesis": "?"}.get(
-                    lr.get("confidence", "confirmed"), ""
-                )
-                parts.append(f"  {conf} {lr['finding']}")
+                icon = TYPE_ICON.get(lr[1] or "finding", "·")
+                conf = {"confirmed": "", "likely": "~", "hypothesis": "?"}.get(lr[2] or "confirmed", "")
+                section.append(f"  {icon}{conf} {lr[0][:120]}")
+            parts.append("\n".join(section))
 
-        # Recent file changes for this project
-        changes_k = int(os.environ.get("AGORA_INJECT_FILE_CHANGES_K", "5"))
-        changes = store.get_recent_file_changes_for_project(pid, limit=changes_k)
-        if changes:
-            parts.append("Recent file changes:")
-            for ch in changes:
-                ts = ch.get("timestamp", "")[:16]
-                parts.append(f"  {ts} {ch.get('diff_summary', '')}")
+        # ── 3. Git log (always live — no storage needed) ─────────────────────
+        def _git(cmd):
+            try:
+                r = _sp.run(cmd, capture_output=True, text=True, timeout=5)
+                return r.stdout.strip() if r.returncode == 0 else ""
+            except Exception:
+                return ""
 
-        return "\n".join(parts) if parts else None
+        git_log = _git(["git", "log", "--oneline", "-6"])
+        if git_log:
+            parts.append(f"GIT LOG\n" + "\n".join(f"  {l}" for l in git_log.splitlines()))
+
+        # ── 4. Uncommitted files ──────────────────────────────────────────────
+        uncommitted = _git(["git", "diff", "--name-only", "HEAD"]).splitlines()
+        staged = _git(["git", "diff", "--cached", "--name-only"]).splitlines()
+        dirty = list(dict.fromkeys(uncommitted + staged))[:8]
+        if dirty:
+            parts.append("UNCOMMITTED\n  " + ", ".join(dirty))
+
+        # ── 5. Symbol index for recently touched files ────────────────────────
+        if dirty:
+            symbol_lines = []
+            for fp in dirty[:3]:
+                syms = store.get_symbols_for_file(fp, project_id=pid, branch=branch)
+                if syms:
+                    names = ", ".join(
+                        f"{s['symbol_name']}:{s['start_line']}" for s in syms[:8]
+                    )
+                    symbol_lines.append(f"  {fp}: {names}")
+            if symbol_lines:
+                parts.append("SYMBOL INDEX\n" + "\n".join(symbol_lines))
+
+        return "\n\n".join(parts) if parts else None
     except Exception:
         return None

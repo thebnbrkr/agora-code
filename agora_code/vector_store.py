@@ -146,8 +146,12 @@ class VectorStore:
                 timestamp    TEXT NOT NULL
             )
         """)
-        # Safe migration: add project_id to file_changes
-        for col, defn in [("project_id", "TEXT")]:
+        # Safe migrations for file_changes
+        for col, defn in [
+            ("project_id",   "TEXT"),
+            ("status",       "TEXT DEFAULT 'uncommitted'"),  # uncommitted | committed
+            ("committed_at", "TEXT"),
+        ]:
             try:
                 conn.execute(f"ALTER TABLE file_changes ADD COLUMN {col} {defn}")
             except Exception:
@@ -155,6 +159,10 @@ class VectorStore:
         conn.execute("""
             CREATE INDEX IF NOT EXISTS idx_file_changes_project
             ON file_changes(project_id, timestamp)
+        """)
+        conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_file_changes_commit
+            ON file_changes(commit_sha, status)
         """)
 
         # ── Learnings ────────────────────────────────────────────────────────
@@ -181,6 +189,7 @@ class VectorStore:
             ("files",      "TEXT"),
             ("namespace",  "TEXT DEFAULT 'personal'"),
             ("project_id", "TEXT"),  # git remote URL or directory name
+            ("type",       "TEXT DEFAULT 'finding'"),  # decision|finding|blocker|next_step
         ]:
             try:
                 conn.execute(f"ALTER TABLE learnings ADD COLUMN {col} {defn}")
@@ -189,6 +198,10 @@ class VectorStore:
         conn.execute("""
             CREATE INDEX IF NOT EXISTS idx_learnings_project
             ON learnings(project_id, timestamp)
+        """)
+        conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_learnings_type
+            ON learnings(project_id, type, timestamp)
         """)
         # FTS5 over learnings — always available
         conn.execute("""
@@ -215,6 +228,121 @@ class VectorStore:
                 VALUES ('delete', old.rowid, old.id, old.finding,
                         COALESCE(old.evidence, ''),
                         COALESCE(old.tags, ''));
+            END
+        """)
+
+        # ── File snapshots (AST summaries from tree-sitter) ──────────────────
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS file_snapshots (
+                id          TEXT PRIMARY KEY,
+                file_path   TEXT NOT NULL,
+                project_id  TEXT,
+                branch      TEXT,
+                commit_sha  TEXT,
+                session_id  TEXT,
+                summary     TEXT NOT NULL,
+                symbols     TEXT,
+                timestamp   TEXT NOT NULL
+            )
+        """)
+        conn.execute("""
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_snapshots_file_branch
+            ON file_snapshots(project_id, file_path, branch)
+        """)
+        conn.execute("""
+            CREATE VIRTUAL TABLE IF NOT EXISTS file_snapshots_fts USING fts5(
+                id,
+                file_path,
+                summary,
+                symbols,
+                content='file_snapshots',
+                content_rowid='rowid'
+            )
+        """)
+        conn.execute("""
+            CREATE TRIGGER IF NOT EXISTS snapshots_ai AFTER INSERT ON file_snapshots BEGIN
+                INSERT INTO file_snapshots_fts(rowid, id, file_path, summary, symbols)
+                VALUES (new.rowid, new.id, new.file_path, new.summary,
+                        COALESCE(new.symbols, ''));
+            END
+        """)
+        conn.execute("""
+            CREATE TRIGGER IF NOT EXISTS snapshots_au AFTER UPDATE ON file_snapshots BEGIN
+                INSERT INTO file_snapshots_fts(file_snapshots_fts, rowid, id, file_path, summary, symbols)
+                VALUES ('delete', old.rowid, old.id, old.file_path, old.summary,
+                        COALESCE(old.symbols, ''));
+                INSERT INTO file_snapshots_fts(rowid, id, file_path, summary, symbols)
+                VALUES (new.rowid, new.id, new.file_path, new.summary,
+                        COALESCE(new.symbols, ''));
+            END
+        """)
+        conn.execute("""
+            CREATE TRIGGER IF NOT EXISTS snapshots_ad AFTER DELETE ON file_snapshots BEGIN
+                INSERT INTO file_snapshots_fts(file_snapshots_fts, rowid, id, file_path, summary, symbols)
+                VALUES ('delete', old.rowid, old.id, old.file_path, old.summary,
+                        COALESCE(old.symbols, ''));
+            END
+        """)
+
+        # ── Symbol notes (per-function/class one-liners from AST) ────────────
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS symbol_notes (
+                id          TEXT PRIMARY KEY,
+                file_path   TEXT NOT NULL,
+                symbol_type TEXT NOT NULL,
+                symbol_name TEXT NOT NULL,
+                start_line  INTEGER,
+                end_line    INTEGER,
+                signature   TEXT,
+                note        TEXT,
+                project_id  TEXT,
+                branch      TEXT,
+                commit_sha  TEXT,
+                session_id  TEXT,
+                timestamp   TEXT NOT NULL
+            )
+        """)
+        conn.execute("""
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_symbol_notes_unique
+            ON symbol_notes(project_id, file_path, symbol_name, branch)
+        """)
+        conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_symbol_notes_file
+            ON symbol_notes(project_id, file_path, branch)
+        """)
+        conn.execute("""
+            CREATE VIRTUAL TABLE IF NOT EXISTS symbol_notes_fts USING fts5(
+                id,
+                file_path,
+                symbol_name,
+                signature,
+                note,
+                content='symbol_notes',
+                content_rowid='rowid'
+            )
+        """)
+        conn.execute("""
+            CREATE TRIGGER IF NOT EXISTS symbol_notes_ai AFTER INSERT ON symbol_notes BEGIN
+                INSERT INTO symbol_notes_fts(rowid, id, file_path, symbol_name, signature, note)
+                VALUES (new.rowid, new.id, new.file_path, new.symbol_name,
+                        COALESCE(new.signature, ''), COALESCE(new.note, ''));
+            END
+        """)
+        conn.execute("""
+            CREATE TRIGGER IF NOT EXISTS symbol_notes_au AFTER UPDATE ON symbol_notes BEGIN
+                INSERT INTO symbol_notes_fts(symbol_notes_fts, rowid, id, file_path, symbol_name, signature, note)
+                VALUES ('delete', old.rowid, old.id, old.file_path, old.symbol_name,
+                        COALESCE(old.signature, ''), COALESCE(old.note, ''));
+                INSERT INTO symbol_notes_fts(rowid, id, file_path, symbol_name, signature, note)
+                VALUES (new.rowid, new.id, new.file_path, new.symbol_name,
+                        COALESCE(new.signature, ''), COALESCE(new.note, ''));
+            END
+        """)
+        conn.execute("""
+            CREATE TRIGGER IF NOT EXISTS symbol_notes_ad AFTER DELETE ON symbol_notes BEGIN
+                INSERT INTO symbol_notes_fts(symbol_notes_fts, rowid, id, file_path, symbol_name, signature, note)
+                VALUES ('delete', old.rowid, old.id, old.file_path, old.symbol_name,
+                        COALESCE(old.signature, ''), COALESCE(old.note, ''));
             END
         """)
 
@@ -466,6 +594,309 @@ class VectorStore:
         """, (file_path, limit)).fetchall()
         return [dict(r) for r in rows]
 
+    # ----------------------------------------------------------------------- #
+    #  File snapshots (AST summaries)                                          #
+    # ----------------------------------------------------------------------- #
+
+    def upsert_file_snapshot(
+        self,
+        file_path: str,
+        summary: str,
+        *,
+        symbols: Optional[str] = None,
+        project_id: Optional[str] = None,
+        branch: Optional[str] = None,
+        commit_sha: Optional[str] = None,
+        session_id: Optional[str] = None,
+    ) -> str:
+        """Store or update an AST summary for a file. One record per (project, file, branch)."""
+        conn = self._conn_()
+        # Check if record exists for this (project, file, branch)
+        existing = conn.execute("""
+            SELECT id FROM file_snapshots
+            WHERE (project_id = ? OR (project_id IS NULL AND ? IS NULL))
+              AND file_path = ?
+              AND (branch = ? OR (branch IS NULL AND ? IS NULL))
+        """, (project_id, project_id, file_path, branch, branch)).fetchone()
+
+        now = _now()
+        if existing:
+            sid = existing[0]
+            conn.execute("""
+                UPDATE file_snapshots
+                SET summary=?, symbols=?, commit_sha=?, session_id=?, timestamp=?
+                WHERE id=?
+            """, (summary, symbols, commit_sha, session_id, now, sid))
+        else:
+            sid = str(uuid.uuid4())
+            conn.execute("""
+                INSERT INTO file_snapshots
+                    (id, file_path, project_id, branch, commit_sha, session_id,
+                     summary, symbols, timestamp)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (sid, file_path, project_id, branch, commit_sha, session_id,
+                  summary, symbols, now))
+        conn.commit()
+        return sid
+
+    def search_file_snapshots(
+        self,
+        query: str,
+        k: int = 5,
+        project_id: Optional[str] = None,
+        branch: Optional[str] = None,
+    ) -> List[Dict]:
+        """FTS5/BM25 search over file snapshots. Falls back to LIKE."""
+        filters = []
+        params: list = []
+        if project_id:
+            filters.append("(s.project_id = ? OR s.project_id IS NULL)")
+            params.append(project_id)
+        if branch:
+            filters.append("(s.branch = ? OR s.branch IS NULL)")
+            params.append(branch)
+        where_extra = ("AND " + " AND ".join(filters)) if filters else ""
+
+        if not query.strip():
+            rows = self._conn_().execute(f"""
+                SELECT id, file_path, summary, symbols, branch, commit_sha, timestamp
+                FROM file_snapshots s
+                WHERE 1=1 {where_extra}
+                ORDER BY timestamp DESC LIMIT ?
+            """, (*params, k)).fetchall()
+            return [dict(r) for r in rows]
+
+        clean = query.replace('"', '""')
+        try:
+            rows = self._conn_().execute(f"""
+                SELECT s.id, s.file_path, s.summary, s.symbols,
+                       s.branch, s.commit_sha, s.timestamp,
+                       bm25(file_snapshots_fts) as score
+                FROM file_snapshots_fts f
+                JOIN file_snapshots s ON s.id = f.id
+                WHERE file_snapshots_fts MATCH ?
+                  {where_extra}
+                ORDER BY score LIMIT ?
+            """, (f'"{clean}"', *params, k)).fetchall()
+            return [dict(r) for r in rows]
+        except Exception:
+            rows = self._conn_().execute(f"""
+                SELECT id, file_path, summary, symbols, branch, commit_sha, timestamp
+                FROM file_snapshots s
+                WHERE (summary LIKE ? OR symbols LIKE ? OR file_path LIKE ?)
+                  {where_extra}
+                ORDER BY timestamp DESC LIMIT ?
+            """, (f"%{query}%", f"%{query}%", f"%{query}%", *params, k)).fetchall()
+            return [dict(r) for r in rows]
+
+    def get_file_snapshot(
+        self,
+        file_path: str,
+        project_id: Optional[str] = None,
+        branch: Optional[str] = None,
+    ) -> Optional[Dict]:
+        """Get the latest AST snapshot for a specific file."""
+        row = self._conn_().execute("""
+            SELECT id, file_path, summary, symbols, branch, commit_sha, timestamp
+            FROM file_snapshots
+            WHERE file_path = ?
+              AND (project_id = ? OR project_id IS NULL)
+              AND (branch = ? OR branch IS NULL)
+            ORDER BY timestamp DESC LIMIT 1
+        """, (file_path, project_id, branch)).fetchone()
+        return dict(row) if row else None
+
+
+    # ----------------------------------------------------------------------- #
+    #  Symbol notes                                                             #
+    # ----------------------------------------------------------------------- #
+
+    def upsert_symbol_note(
+        self,
+        file_path: str,
+        symbol_type: str,
+        symbol_name: str,
+        *,
+        start_line: Optional[int] = None,
+        end_line: Optional[int] = None,
+        signature: Optional[str] = None,
+        note: Optional[str] = None,
+        project_id: Optional[str] = None,
+        branch: Optional[str] = None,
+        commit_sha: Optional[str] = None,
+        session_id: Optional[str] = None,
+    ) -> str:
+        """Insert or update a per-symbol one-liner. Unique per (project, file, symbol, branch)."""
+        conn = self._conn_()
+        existing = conn.execute("""
+            SELECT id FROM symbol_notes
+            WHERE (project_id = ? OR (project_id IS NULL AND ? IS NULL))
+              AND file_path = ?
+              AND symbol_name = ?
+              AND (branch = ? OR (branch IS NULL AND ? IS NULL))
+        """, (project_id, project_id, file_path, symbol_name, branch, branch)).fetchone()
+
+        now = _now()
+        if existing:
+            sid = existing[0]
+            conn.execute("""
+                UPDATE symbol_notes
+                SET symbol_type=?, start_line=?, end_line=?, signature=?,
+                    note=?, commit_sha=?, session_id=?, timestamp=?
+                WHERE id=?
+            """, (symbol_type, start_line, end_line, signature,
+                  note, commit_sha, session_id, now, sid))
+        else:
+            sid = str(uuid.uuid4())
+            conn.execute("""
+                INSERT INTO symbol_notes
+                    (id, file_path, symbol_type, symbol_name, start_line, end_line,
+                     signature, note, project_id, branch, commit_sha, session_id, timestamp)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (sid, file_path, symbol_type, symbol_name, start_line, end_line,
+                  signature, note, project_id, branch, commit_sha, session_id, now))
+        conn.commit()
+        return sid
+
+    def upsert_symbol_notes_bulk(self, symbols: list[dict]) -> int:
+        """Upsert a list of symbol dicts (same keys as upsert_symbol_note). Returns count."""
+        count = 0
+        for s in symbols:
+            self.upsert_symbol_note(
+                s["file_path"], s["symbol_type"], s["symbol_name"],
+                start_line=s.get("start_line"),
+                end_line=s.get("end_line"),
+                signature=s.get("signature"),
+                note=s.get("note"),
+                project_id=s.get("project_id"),
+                branch=s.get("branch"),
+                commit_sha=s.get("commit_sha"),
+                session_id=s.get("session_id"),
+            )
+            count += 1
+        return count
+
+    def delete_symbols_for_file(
+        self,
+        file_path: str,
+        project_id: Optional[str] = None,
+        branch: Optional[str] = None,
+    ) -> None:
+        """Remove all symbol notes for a file (called before re-indexing after edit)."""
+        self._conn_().execute("""
+            DELETE FROM symbol_notes
+            WHERE file_path = ?
+              AND (project_id = ? OR project_id IS NULL)
+              AND (branch = ? OR branch IS NULL)
+        """, (file_path, project_id, branch))
+        self._conn_().commit()
+
+    def get_symbols_for_file(
+        self,
+        file_path: str,
+        project_id: Optional[str] = None,
+        branch: Optional[str] = None,
+    ) -> List[Dict]:
+        """Return all symbol notes for a file, ordered by start_line."""
+        rows = self._conn_().execute("""
+            SELECT id, file_path, symbol_type, symbol_name, start_line, end_line,
+                   signature, note, branch, commit_sha, timestamp
+            FROM symbol_notes
+            WHERE file_path = ?
+              AND (project_id = ? OR project_id IS NULL)
+              AND (branch = ? OR branch IS NULL)
+            ORDER BY start_line
+        """, (file_path, project_id, branch)).fetchall()
+        return [dict(r) for r in rows]
+
+    def search_symbol_notes(
+        self,
+        query: str,
+        k: int = 10,
+        project_id: Optional[str] = None,
+        branch: Optional[str] = None,
+        symbol_type: Optional[str] = None,
+    ) -> List[Dict]:
+        """FTS5/BM25 search over symbol notes. Falls back to LIKE."""
+        filters = []
+        params: list = []
+        if project_id:
+            filters.append("(s.project_id = ? OR s.project_id IS NULL)")
+            params.append(project_id)
+        if branch:
+            filters.append("(s.branch = ? OR s.branch IS NULL)")
+            params.append(branch)
+        if symbol_type:
+            filters.append("s.symbol_type = ?")
+            params.append(symbol_type)
+        where_extra = ("AND " + " AND ".join(filters)) if filters else ""
+
+        if not query.strip():
+            rows = self._conn_().execute(f"""
+                SELECT id, file_path, symbol_type, symbol_name, start_line, end_line,
+                       signature, note, branch, commit_sha, timestamp
+                FROM symbol_notes s
+                WHERE 1=1 {where_extra}
+                ORDER BY file_path, start_line LIMIT ?
+            """, (*params, k)).fetchall()
+            return [dict(r) for r in rows]
+
+        # Multi-word queries: join tokens with OR so "store learning" matches
+        # symbols containing any of the words, not the exact phrase.
+        tokens = [t.replace('"', '""') for t in query.split() if t]
+        fts_expr = " OR ".join(f'"{t}"' for t in tokens) if tokens else f'"{query}"'
+        try:
+            rows = self._conn_().execute(f"""
+                SELECT s.id, s.file_path, s.symbol_type, s.symbol_name,
+                       s.start_line, s.end_line, s.signature, s.note,
+                       s.branch, s.commit_sha, s.timestamp,
+                       bm25(symbol_notes_fts) as score
+                FROM symbol_notes_fts f
+                JOIN symbol_notes s ON s.id = f.id
+                WHERE symbol_notes_fts MATCH ?
+                  {where_extra}
+                ORDER BY score LIMIT ?
+            """, (fts_expr, *params, k)).fetchall()
+            return [dict(r) for r in rows]
+        except Exception:
+            rows = self._conn_().execute(f"""
+                SELECT id, file_path, symbol_type, symbol_name, start_line, end_line,
+                       signature, note, branch, commit_sha, timestamp
+                FROM symbol_notes s
+                WHERE (symbol_name LIKE ? OR note LIKE ? OR file_path LIKE ?)
+                  {where_extra}
+                ORDER BY file_path, start_line LIMIT ?
+            """, (f"%{query}%", f"%{query}%", f"%{query}%", *params, k)).fetchall()
+            return [dict(r) for r in rows]
+
+    def tag_committed_files(
+        self,
+        file_paths: list[str],
+        commit_sha: str,
+        project_id: Optional[str] = None,
+        branch: Optional[str] = None,
+    ) -> int:
+        """Mark file_changes as committed + update symbol_notes commit_sha. Returns rows updated."""
+        conn = self._conn_()
+        now = _now()
+        updated = 0
+        for fp in file_paths:
+            r = conn.execute("""
+                UPDATE file_changes
+                SET commit_sha=?, status='committed', committed_at=?
+                WHERE file_path=? AND status='uncommitted'
+                  AND (project_id=? OR project_id IS NULL)
+            """, (commit_sha, now, fp, project_id))
+            updated += r.rowcount
+            conn.execute("""
+                UPDATE symbol_notes
+                SET commit_sha=?
+                WHERE file_path=?
+                  AND (project_id=? OR project_id IS NULL)
+                  AND (branch=? OR branch IS NULL)
+            """, (commit_sha, fp, project_id, branch))
+        conn.commit()
+        return updated
 
     # ----------------------------------------------------------------------- #
     #  Learnings                                                                #
@@ -487,6 +918,7 @@ class VectorStore:
         files: Optional[list[str]] = None,
         namespace: str = "personal",
         project_id: Optional[str] = None,
+        type: str = "finding",  # decision|finding|blocker|next_step
     ) -> str:
         """Store a learning and (optionally) its embedding. Returns learning ID."""
         conn = self._conn_()
@@ -499,12 +931,12 @@ class VectorStore:
             INSERT INTO learnings
                 (id, session_id, timestamp, api_base_url, endpoint_method,
                  endpoint_path, finding, evidence, confidence, tags,
-                 branch, files, namespace, project_id)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 branch, files, namespace, project_id, type)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             lid, session_id, now, api_base_url, endpoint_method,
             endpoint_path, finding, evidence, confidence, tags_json,
-            branch, files_json, namespace, project_id,
+            branch, files_json, namespace, project_id, type,
         ))
 
         if embedding and self._vec_available:
@@ -524,6 +956,8 @@ class VectorStore:
         k: int = 5,
         namespace: str = "personal",
         project_id: Optional[str] = None,
+        branch: Optional[str] = None,
+        type: Optional[str] = None,
     ) -> List[Dict]:
         """Cosine similarity search over learnings. Returns [] if sqlite-vec unavailable."""
         if not self._vec_available or not self._vec_dim:
@@ -533,22 +967,31 @@ class VectorStore:
         if self._vec_dim != dim:
             return []
 
-        project_filter = "AND (l.project_id = ? OR l.project_id IS NULL)" if project_id else ""
-        params = [self._pack(query_embedding), k * 2, namespace]
+        filters = ["(l.namespace = ? OR l.namespace IS NULL)"]
+        params: list = [self._pack(query_embedding), k * 2, namespace]
+
         if project_id:
+            filters.append("(l.project_id = ? OR l.project_id IS NULL)")
             params.append(project_id)
+        if branch:
+            filters.append("(l.branch = ? OR l.branch IS NULL)")
+            params.append(branch)
+        if type:
+            filters.append("l.type = ?")
+            params.append(type)
+
+        where = " AND ".join(filters)
 
         try:
             rows = self._conn_().execute(f"""
                 SELECT l.id, l.finding, l.evidence, l.confidence, l.tags,
                        l.endpoint_method, l.endpoint_path, l.timestamp,
-                       l.branch, l.files, l.namespace,
+                       l.branch, l.files, l.namespace, l.type,
                        v.distance
                 FROM learnings_vec_{dim} v
                 JOIN learnings l ON l.id = v.learning_id
                 WHERE v.embedding MATCH ? AND k = ?
-                  AND (l.namespace = ? OR l.namespace IS NULL)
-                  {project_filter}
+                  AND {where}
                 ORDER BY v.distance
             """, params).fetchall()
 
@@ -564,80 +1007,74 @@ class VectorStore:
         k: int = 5,
         namespace: str = "personal",
         project_id: Optional[str] = None,
+        branch: Optional[str] = None,
+        type: Optional[str] = None,
     ) -> List[Dict]:
         """FTS5/BM25 keyword search over learnings. Always works."""
-        project_filter = "AND (l.project_id = ? OR l.project_id IS NULL)" if project_id else ""
-        base_filter = "(AND (project_id = ? OR project_id IS NULL))" if project_id else ""
+        SELECT_COLS = """id, finding, evidence, confidence, tags,
+                         endpoint_method, endpoint_path, timestamp,
+                         branch, files, namespace, type"""
+
+        # Build dynamic WHERE filters
+        filters = ["(namespace = ? OR namespace IS NULL)"]
+        base_params: list = [namespace]
+        if project_id:
+            filters.append("(project_id = ? OR project_id IS NULL)")
+            base_params.append(project_id)
+        if branch:
+            filters.append("(branch = ? OR branch IS NULL)")
+            base_params.append(branch)
+        if type:
+            filters.append("type = ?")
+            base_params.append(type)
+        where = " AND ".join(filters)
 
         if not query.strip():
-            # No query — return recent learnings for this project
-            if project_id:
-                rows = self._conn_().execute("""
-                    SELECT id, finding, evidence, confidence, tags,
-                           endpoint_method, endpoint_path, timestamp,
-                           branch, files, namespace
-                    FROM learnings
-                    WHERE (namespace = ? OR namespace IS NULL)
-                      AND (project_id = ? OR project_id IS NULL)
-                    ORDER BY timestamp DESC LIMIT ?
-                """, (namespace, project_id, k)).fetchall()
-            else:
-                rows = self._conn_().execute("""
-                    SELECT id, finding, evidence, confidence, tags,
-                           endpoint_method, endpoint_path, timestamp,
-                           branch, files, namespace
-                    FROM learnings
-                    WHERE (namespace = ? OR namespace IS NULL)
-                    ORDER BY timestamp DESC LIMIT ?
-                """, (namespace, k)).fetchall()
+            # No query — return recent learnings ordered by recency
+            rows = self._conn_().execute(f"""
+                SELECT {SELECT_COLS}
+                FROM learnings
+                WHERE {where}
+                ORDER BY timestamp DESC LIMIT ?
+            """, (*base_params, k)).fetchall()
             return [_learning_row(r) for r in rows]
 
         clean = query.replace('"', '""')
         try:
-            fts_params = [f'"{clean}"', namespace]
-            if project_id:
-                fts_params.append(project_id)
-            fts_params.append(k)
+            fts_params = [f'"{clean}"', *base_params, k]
+            # FTS5 content table — join back to get all columns including type
+            fts_filters = " AND ".join(
+                f.replace("namespace", "l.namespace")
+                 .replace("project_id", "l.project_id")
+                 .replace("branch", "l.branch")
+                 .replace("type", "l.type")
+                for f in filters
+            )
             rows = self._conn_().execute(f"""
                 SELECT l.id, l.finding, l.evidence, l.confidence, l.tags,
                        l.endpoint_method, l.endpoint_path, l.timestamp,
-                       l.branch, l.files, l.namespace,
+                       l.branch, l.files, l.namespace, l.type,
                        bm25(learnings_fts) as score
                 FROM learnings_fts f
                 JOIN learnings l ON l.id = f.id
                 WHERE learnings_fts MATCH ?
-                  AND (l.namespace = ? OR l.namespace IS NULL)
-                  {project_filter}
+                  AND {fts_filters}
                 ORDER BY score
                 LIMIT ?
             """, fts_params).fetchall()
             return [_learning_row(r) for r in rows]
         except Exception:
-            # FTS5 match failed — fall back to LIKE
-            like_params = [f"%{query}%", f"%{query}%", namespace]
-            if project_id:
-                like_params.extend([project_id, k])
-                rows = self._conn_().execute("""
-                    SELECT id, finding, evidence, confidence, tags,
-                           endpoint_method, endpoint_path, timestamp,
-                           branch, files, namespace
-                    FROM learnings
-                    WHERE (finding LIKE ? OR evidence LIKE ?)
-                      AND (namespace = ? OR namespace IS NULL)
-                      AND (project_id = ? OR project_id IS NULL)
-                    ORDER BY timestamp DESC LIMIT ?
-                """, like_params).fetchall()
-            else:
-                like_params.append(k)
-                rows = self._conn_().execute("""
-                    SELECT id, finding, evidence, confidence, tags,
-                           endpoint_method, endpoint_path, timestamp,
-                           branch, files, namespace
-                    FROM learnings
-                    WHERE (finding LIKE ? OR evidence LIKE ?)
-                      AND (namespace = ? OR namespace IS NULL)
-                    ORDER BY timestamp DESC LIMIT ?
-                """, like_params).fetchall()
+            # FTS5 match failed — fall back to LIKE using same dynamic filters
+            like_params = [f"%{query}%", f"%{query}%", *base_params, k]
+            rows = self._conn_().execute(f"""
+                SELECT id, finding, evidence, confidence, tags,
+                       endpoint_method, endpoint_path, timestamp,
+                       branch, files, namespace, type
+                FROM learnings
+                WHERE (finding LIKE ? OR evidence LIKE ?)
+                  AND {where}
+                ORDER BY timestamp DESC LIMIT ?
+            """, like_params).fetchall()
             return [_learning_row(r) for r in rows]
 
     # ----------------------------------------------------------------------- #
@@ -780,6 +1217,7 @@ def _learning_row(row) -> Dict:
         d["files"] = json.loads(d.get("files") or "[]")
     except Exception:
         d["files"] = []
+    d.setdefault("type", "finding")
     d.pop("score", None)
     d.pop("distance", None)
     return d

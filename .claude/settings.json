@@ -35,6 +35,15 @@
     ],
     "PostToolUse": [
       {
+        "matcher": "Read",
+        "hooks": [
+          {
+            "type": "command",
+            "command": ".claude/hooks/on-read.sh"
+          }
+        ]
+      },
+      {
         "matcher": "Write|Edit|MultiEdit",
         "hooks": [
           {
@@ -43,7 +52,16 @@
           },
           {
             "type": "command",
-            "command": "python3 -c \"import sys,json,subprocess; d=json.loads(sys.stdin.read()); fp=(d.get('tool_input') or {}).get('file_path',''); subprocess.run(['agora-code','track-diff',fp]) if fp else None\" 2>/dev/null || true"
+            "command": ".claude/hooks/on-edit.sh"
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": ".claude/hooks/on-bash.sh"
           }
         ]
       }

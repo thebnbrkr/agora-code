@@ -221,6 +221,51 @@ _TOOLS = [
             },
             "required": ["file_path"]
         }
+    },
+    {
+        "name": "get_file_symbols",
+        "description": (
+            "Return one-liner descriptions of every function/class in a file — WITHOUT reading the file. "
+            "Each entry has: symbol_name, symbol_type, start_line, end_line, signature, note. "
+            "USE THIS INSTEAD OF reading a file when you only need to know what functions exist "
+            "or what they do. Saves ~97% of tokens vs reading the full file. "
+            "Then use the start_line/end_line to Read only the specific function you need."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "file_path": {
+                    "type": "string",
+                    "description": "Path to the file, e.g. 'agora_code/cli.py'"
+                }
+            },
+            "required": ["file_path"]
+        }
+    },
+    {
+        "name": "search_symbols",
+        "description": (
+            "Search for functions/classes across the entire codebase by name, signature, or description. "
+            "Returns matching symbols with file path, line numbers, and one-liner notes. "
+            "USE THIS WHEN: looking for where a function is defined, finding all functions that "
+            "handle a specific concern (e.g. 'authentication', 'database'), or exploring a codebase."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Function name, concept, or description to search for"
+                },
+                "symbol_type": {
+                    "type": "string",
+                    "enum": ["function", "method", "class"],
+                    "description": "Filter by symbol type (optional)"
+                },
+                "limit": {"type": "integer", "default": 10}
+            },
+            "required": ["query"]
+        }
     }
 ]
 
@@ -524,6 +569,85 @@ async def _handle_recall_file_history(params: dict) -> str:
     return "\n".join(lines)
 
 
+async def _handle_get_file_symbols(params: dict) -> str:
+    from agora_code.vector_store import get_store
+    from agora_code.session import _get_project_id, _get_git_branch
+    from agora_code.indexer import index_file
+    from pathlib import Path
+
+    file_path = params.get("file_path", "").strip()
+    if not file_path:
+        return "Error: file_path is required."
+
+    store = get_store()
+    pid = _get_project_id()
+    branch = _get_git_branch()
+
+    # Try DB first
+    syms = store.get_symbols_for_file(file_path, project_id=pid, branch=branch)
+
+    # If not indexed yet and file exists, index it now
+    if not syms and Path(file_path).exists():
+        count = index_file(file_path, project_id=pid, branch=branch)
+        if count:
+            syms = store.get_symbols_for_file(file_path, project_id=pid, branch=branch)
+
+    if not syms:
+        return (
+            f"No symbol index for '{file_path}'. "
+            "File will be indexed automatically next time it is read or edited."
+        )
+
+    lines = [f"Symbols in {file_path} ({len(syms)} total):"]
+    for s in syms:
+        note_str = f"  — {s['note']}" if s.get("note") else ""
+        end_str = f"-{s['end_line']}" if s.get("end_line") else ""
+        lines.append(
+            f"  [{s['symbol_type']:8}] {s['symbol_name']:30} "
+            f"line {s['start_line']}{end_str}{note_str}"
+        )
+    lines.append(
+        f"\nTip: use Read with offset={syms[0]['start_line']} limit=<end-start> "
+        "to read only the function you need."
+    )
+    return "\n".join(lines)
+
+
+async def _handle_search_symbols(params: dict) -> str:
+    from agora_code.vector_store import get_store
+    from agora_code.session import _get_project_id, _get_git_branch
+
+    query = params.get("query", "").strip()
+    if not query:
+        return "Error: query is required."
+
+    limit = int(params.get("limit", 10))
+    symbol_type = params.get("symbol_type")
+    store = get_store()
+    pid = _get_project_id()
+    branch = _get_git_branch()
+
+    results = store.search_symbol_notes(
+        query, k=limit,
+        project_id=pid,
+        branch=branch,
+        symbol_type=symbol_type,
+    )
+
+    if not results:
+        return f"No symbols matching '{query}' found in the index."
+
+    lines = [f"Symbols matching '{query}' ({len(results)} results):"]
+    for r in results:
+        note_str = f"  — {r['note']}" if r.get("note") else ""
+        end_str = f"-{r['end_line']}" if r.get("end_line") else ""
+        lines.append(
+            f"  {r['file_path']}:{r['start_line']}{end_str}  "
+            f"[{r['symbol_type']}] {r['symbol_name']}{note_str}"
+        )
+    return "\n".join(lines)
+
+
 _HANDLERS = {
     "get_session_context":   _handle_get_session_context,
     "save_checkpoint":       _handle_save_checkpoint,
@@ -535,6 +659,8 @@ _HANDLERS = {
     "store_team_learning":   _handle_store_team_learning,
     "recall_team":           _handle_recall_team,
     "recall_file_history":   _handle_recall_file_history,
+    "get_file_symbols":      _handle_get_file_symbols,
+    "search_symbols":        _handle_search_symbols,
 }
 
 
