@@ -5,5 +5,8 @@
   "author": {
     "name": "agora-code contributors"
   },
-  "keywords": ["memory", "session", "context", "api-discovery", "persistence"]
+  "keywords": ["memory", "session", "context", "api-discovery", "persistence"],
+  "scripts": {
+    "postInstall": "sh setup.sh"
+  }
 }
