@@ -8,7 +8,7 @@
   },
   "plugins": [
     {
-      "name": "agora-code",
+      "name": "agora-code-plugin",
       "source": "./",
       "description": "Persistent memory for Claude Code — auto-injects session context, intercepts large file reads with AST summaries, recalls relevant learnings on every prompt, and digests conversations into searchable memory.",
       "version": "0.1.0",
