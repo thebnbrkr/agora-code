@@ -1,5 +1,5 @@
 {
-  "name": "agora-code-plugin",
+  "name": "agora-code",
   "description": "Persistent memory and symbol indexing for Claude Code — inject session context, summarize large files, recall past findings across sessions.",
   "version": "0.1.0",
   "author": {
