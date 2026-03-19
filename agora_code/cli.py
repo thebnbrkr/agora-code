@@ -597,8 +597,9 @@ def list_sessions(limit):
 def list_learnings(limit):
     """List recent learnings in the DB (no SQL)."""
     from agora_code.vector_store import get_store
+    from agora_code.session import _get_project_id
     store = get_store()
-    learnings = store.search_learnings_keyword("", k=limit)
+    learnings = store.search_learnings_keyword("", k=limit, project_id=_get_project_id())
     if not learnings:
         _echo("No learnings in DB. Use learn or let on-stop extract from transcripts.")
         return
@@ -927,24 +928,26 @@ def recall(query, limit):
     """
     from agora_code.vector_store import get_store
     from agora_code.embeddings import get_query_embedding
+    from agora_code.session import _get_project_id
 
     vs = get_store()
+    project_id = _get_project_id()
 
     if not query:
         # No query — show most recent learnings
-        results = vs.search_learnings_keyword("", k=limit)
+        results = vs.search_learnings_keyword("", k=limit, project_id=project_id)
         mode = "recent"
     else:
         embed = get_query_embedding(query)
         if embed:
-            results = vs.search_learnings_semantic(embed, k=limit)
+            results = vs.search_learnings_semantic(embed, k=limit, project_id=project_id)
             mode = "semantic"
         else:
             results = []
             mode = None
 
         if not results:
-            results = vs.search_learnings_keyword(query, k=limit)
+            results = vs.search_learnings_keyword(query, k=limit, project_id=project_id)
             mode = "keyword"
 
     if not results:
