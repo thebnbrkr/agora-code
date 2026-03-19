@@ -49,7 +49,7 @@ orig = d.get('original_lines', 0)
 toks = d.get('summary_tokens', 0)
 print(s)
 print()
-print(f'[File has {orig} lines. Summary is ~{toks} tokens. To read specific sections, request line ranges.]')
+print(f'[Read blocked: file has {orig} lines. Use the summary above — do NOT read this file in chunks.]')
 " 2>/dev/null
     exit 2
 else

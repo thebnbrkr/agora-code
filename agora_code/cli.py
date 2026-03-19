@@ -1553,7 +1553,7 @@ import sys, json
 d = json.loads(sys.stdin.read())
 print(d.get('summary', ''))
 print()
-print(f'[File has {{d.get(\\\"original_lines\\\", 0)}} lines — request specific line ranges for details]')
+print(f'[Read blocked: file has {{d.get(\\\"original_lines\\\", 0)}} lines. Use the summary above — do NOT read this file in chunks.]')
 " 2>/dev/null
     exit 2
 fi
@@ -1887,15 +1887,10 @@ exit 0
         p.write_text(content, encoding="utf-8")
         p.chmod(p.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
 
-    # Install SKILL.md — project-level and user-global
+    # Install SKILL.md — user-global only (not project-level, to avoid duplication)
     skill_md_content = _get_skill_md_content()
     skill_path = None
     if skill_md_content:
-        # Project-level: .claude/skills/agora-code/SKILL.md
-        project_skill_dir = claude_dir / "skills" / "agora-code"
-        project_skill_dir.mkdir(parents=True, exist_ok=True)
-        (project_skill_dir / "SKILL.md").write_text(skill_md_content, encoding="utf-8")
-        # Global: ~/.claude/skills/agora-code/SKILL.md
         global_skill_dir = Path.home() / ".claude" / "skills" / "agora-code"
         global_skill_dir.mkdir(parents=True, exist_ok=True)
         skill_path = global_skill_dir / "SKILL.md"
@@ -1921,11 +1916,11 @@ exit 0
     for name in scripts:
         _echo(f"   {hooks_dir / name}")
     if skill_md_content:
-        _echo(f"   .claude/skills/agora-code/SKILL.md")
         _echo(f"   {skill_path}")
     _echo(f"   {mcp_path}")
     _echo("")
     _echo("Restart Claude Code in this directory to activate.")
+    _echo("At the start of each session, run /agora-code to load the skill.")
 
 
 # --------------------------------------------------------------------------- #

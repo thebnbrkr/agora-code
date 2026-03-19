@@ -267,11 +267,18 @@ def test_scan_quiet_suppresses_output():
 # --------------------------------------------------------------------------- #
 
 def test_install_hooks_creates_skill_md(tmp_path, monkeypatch):
-    """install-hooks --claude-code must create .claude/skills/agora-code/SKILL.md."""
+    """install-hooks --claude-code must create ~/.claude/skills/agora-code/SKILL.md (global only, not project-level)."""
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
     monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(Path, "home", staticmethod(lambda: fake_home))
     _install_claude_code_hooks(force=True)
-    skill_path = tmp_path / ".claude" / "skills" / "agora-code" / "SKILL.md"
-    assert skill_path.exists(), "SKILL.md was not created by install-hooks"
+    # Project-level should NOT be created
+    project_skill = tmp_path / ".claude" / "skills" / "agora-code" / "SKILL.md"
+    assert not project_skill.exists(), "SKILL.md should not be installed at project level"
+    # Global should be created
+    skill_path = fake_home / ".claude" / "skills" / "agora-code" / "SKILL.md"
+    assert skill_path.exists(), "SKILL.md was not created in ~/.claude/skills/"
     content = skill_path.read_text()
     assert "name: agora-code" in content, "SKILL.md missing frontmatter"
     assert "agora-code inject" in content, "SKILL.md missing inject command"

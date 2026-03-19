@@ -28,7 +28,7 @@ import sys, json
 d = json.loads(sys.stdin.read())
 print(d.get('summary', ''))
 print()
-print(f'[File has {d.get(\"original_lines\", 0)} lines — request specific line ranges for details]')
+print(f'[Read blocked: file has {d.get(\"original_lines\", 0)} lines. Use the summary above — do NOT read this file in chunks.]')
 " 2>/dev/null
     exit 2
 fi
