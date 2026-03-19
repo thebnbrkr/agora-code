@@ -17,6 +17,8 @@ from pathlib import Path
 
 import pytest
 
+from agora_code.cli import _install_claude_code_hooks  # imported at collection time (CWD = repo root)
+
 REPO_ROOT = Path(__file__).parent.parent
 
 
@@ -26,7 +28,7 @@ REPO_ROOT = Path(__file__).parent.parent
 
 class TestClaudeHooks:
     def setup_method(self):
-        self.path = REPO_ROOT / ".claude" / "hooks.json"
+        self.path = REPO_ROOT / ".claude" / "settings.json"
         self.config = json.loads(self.path.read_text(encoding="utf-8"))
 
     def test_is_valid_json(self):
@@ -59,6 +61,29 @@ class TestClaudeHooks:
         hooks = self.config["hooks"]["SessionStart"]
         commands = _extract_commands(hooks)
         assert any("inject" in c for c in commands)
+
+    def test_grep_hook_present(self):
+        """PostToolUse must have a Grep matcher so grep results get indexed."""
+        post_tool = self.config["hooks"]["PostToolUse"]
+        matchers = []
+        for item in post_tool:
+            matchers.append(item.get("matcher", ""))
+            for h in item.get("hooks", []):
+                pass
+        assert any("Grep" in m for m in matchers), (
+            "PostToolUse must include a 'Grep' matcher — grep results are not indexed without it"
+        )
+
+    def test_grep_hook_script_exists(self):
+        post_tool = self.config["hooks"]["PostToolUse"]
+        for item in post_tool:
+            if "Grep" in item.get("matcher", ""):
+                for hook in item.get("hooks", []):
+                    cmd = hook.get("command", "")
+                    if cmd.endswith(".sh"):
+                        script = REPO_ROOT / cmd
+                        assert script.exists(), f"Grep hook script missing: {cmd}"
+                        assert script.stat().st_mode & 0o111, f"Grep hook script not executable: {cmd}"
 
     def test_no_missing_flags(self):
         """All referenced agora-code commands must use flags that now exist."""
@@ -137,31 +162,21 @@ class TestGeminiHooks:
     def test_has_hooks_key(self):
         assert "hooks" in self.config
 
-    def test_no_pre_compress(self):
-        assert "PreCompress" not in self.config["hooks"], (
-            "Wrong event name: 'PreCompress' should be 'PreCompact'"
+    def test_has_pre_compress(self):
+        assert "PreCompress" in self.config["hooks"], (
+            "Gemini uses 'PreCompress' for the pre-compaction event"
         )
 
-    def test_has_pre_compact(self):
-        assert "PreCompact" in self.config["hooks"], (
-            "Gemini hook should use 'PreCompact'"
+    def test_has_after_tool(self):
+        assert "AfterTool" in self.config["hooks"], (
+            "Gemini uses 'AfterTool' for post-tool-use event"
         )
 
-    def test_no_after_tool(self):
-        assert "AfterTool" not in self.config["hooks"], (
-            "Wrong event name: 'AfterTool' should be 'PostToolUse'"
-        )
-
-    def test_has_post_tool_use(self):
-        assert "PostToolUse" in self.config["hooks"], (
-            "Gemini hook should use 'PostToolUse'"
-        )
-
-    def test_pre_compact_uses_checkpoint(self):
-        hooks = self.config["hooks"]["PreCompact"]
+    def test_pre_compress_uses_checkpoint(self):
+        hooks = self.config["hooks"]["PreCompress"]
         commands = _extract_commands(hooks)
         assert any("checkpoint" in c for c in commands), (
-            "PreCompact should call 'agora-code checkpoint'"
+            "PreCompress should call 'agora-code checkpoint'"
         )
         for cmd in commands:
             assert "state save" not in cmd
@@ -244,6 +259,69 @@ def test_scan_quiet_suppresses_output():
     result = _run_cli("scan", ".", "--quiet")
     assert result.returncode == 0
     assert result.stdout.strip() == ""
+
+
+# --------------------------------------------------------------------------- #
+#  install-hooks --claude-code: SKILL.md + on-grep.sh                        #
+# --------------------------------------------------------------------------- #
+
+def test_install_hooks_creates_skill_md(tmp_path, monkeypatch):
+    """install-hooks --claude-code must create .claude/skills/agora-code/SKILL.md."""
+    monkeypatch.chdir(tmp_path)
+    _install_claude_code_hooks(force=True)
+    skill_path = tmp_path / ".claude" / "skills" / "agora-code" / "SKILL.md"
+    assert skill_path.exists(), "SKILL.md was not created by install-hooks"
+    content = skill_path.read_text()
+    assert "name: agora-code" in content, "SKILL.md missing frontmatter"
+    assert "agora-code inject" in content, "SKILL.md missing inject command"
+
+
+def test_install_hooks_creates_on_grep(tmp_path, monkeypatch):
+    """install-hooks --claude-code must create .claude/hooks/on-grep.sh."""
+    monkeypatch.chdir(tmp_path)
+    _install_claude_code_hooks(force=True)
+    grep_hook = tmp_path / ".claude" / "hooks" / "on-grep.sh"
+    assert grep_hook.exists(), "on-grep.sh was not created by install-hooks"
+    assert grep_hook.stat().st_mode & 0o111, "on-grep.sh is not executable"
+
+
+def test_install_hooks_settings_has_grep_matcher(tmp_path, monkeypatch):
+    """settings.json generated by install-hooks must include a Grep PostToolUse matcher."""
+    monkeypatch.chdir(tmp_path)
+    _install_claude_code_hooks(force=True)
+    settings = json.loads((tmp_path / ".claude" / "settings.json").read_text())
+    post_tool = settings["hooks"]["PostToolUse"]
+    matchers = [item.get("matcher", "") for item in post_tool]
+    assert any("Grep" in m for m in matchers), (
+        "Generated settings.json missing Grep matcher in PostToolUse"
+    )
+
+
+def test_install_hooks_creates_mcp_json(tmp_path, monkeypatch):
+    """install-hooks --claude-code must create .mcp.json with agora-memory server."""
+    monkeypatch.chdir(tmp_path)
+    _install_claude_code_hooks(force=True)
+    mcp_path = tmp_path / ".mcp.json"
+    assert mcp_path.exists(), ".mcp.json was not created by install-hooks"
+    mcp = json.loads(mcp_path.read_text())
+    assert "agora-memory" in mcp.get("mcpServers", {}), (
+        ".mcp.json missing agora-memory server entry"
+    )
+    server = mcp["mcpServers"]["agora-memory"]
+    assert server.get("args") == ["memory-server"], (
+        "agora-memory server must use 'memory-server' subcommand"
+    )
+
+
+def test_install_hooks_mcp_json_merges_existing(tmp_path, monkeypatch):
+    """install-hooks must merge into an existing .mcp.json without clobbering other servers."""
+    monkeypatch.chdir(tmp_path)
+    existing = {"mcpServers": {"other-tool": {"command": "other", "args": []}}}
+    (tmp_path / ".mcp.json").write_text(json.dumps(existing))
+    _install_claude_code_hooks(force=True)
+    mcp = json.loads((tmp_path / ".mcp.json").read_text())
+    assert "other-tool" in mcp["mcpServers"], "existing MCP servers must be preserved"
+    assert "agora-memory" in mcp["mcpServers"], "agora-memory must be added"
 
 
 # --------------------------------------------------------------------------- #

@@ -974,6 +974,18 @@ done
     _echo("   View history with: agora-code file-history <file>")
 
 
+def _get_skill_md_content() -> str | None:
+    """Return SKILL.md content, searching relative to this module or the package root."""
+    candidates = [
+        Path(__file__).parent.parent / "skills" / "agora-code" / "SKILL.md",
+        Path(__file__).parent.parent / "SKILL.md",
+    ]
+    for p in candidates:
+        if p.exists():
+            return p.read_text(encoding="utf-8")
+    return None
+
+
 def _install_claude_code_hooks(force: bool) -> None:
     """Generate .claude/settings.json and shell scripts for Claude Code integration."""
     import shutil
@@ -1052,6 +1064,15 @@ def _install_claude_code_hooks(force: bool) -> None:
                     {{
                         "type": "command",
                         "command": ".claude/hooks/on-bash.sh"
+                    }}
+                ]
+            }},
+            {{
+                "matcher": "Grep",
+                "hooks": [
+                    {{
+                        "type": "command",
+                        "command": ".claude/hooks/on-grep.sh"
                     }}
                 ]
             }}
@@ -1364,6 +1385,57 @@ PYEOF
 exit 0
 """
 
+    # --- on-grep.sh: PostToolUse(Grep): index files matched by grep results ---
+    on_grep = f"""#!/bin/sh
+INPUT=$(cat)
+python3 - << 'PYEOF'
+import sys, json, os
+from pathlib import Path
+
+try:
+    import select
+    data = sys.stdin.read() if select.select([sys.stdin], [], [], 0)[0] else ''
+except Exception:
+    data = ''
+
+try:
+    d = json.loads(data) if data else {{}}
+except Exception:
+    d = {{}}
+
+response = str(d.get('tool_response', ''))
+CODE_EXTS = {{'.py','.js','.ts','.jsx','.tsx','.go','.rs','.java','.c','.cpp','.cs','.rb','.swift','.kt','.php','.sh'}}
+seen = set()
+for line in response.splitlines():
+    # files_with_matches mode: just a path; content mode: path:linenum:text
+    candidate = line.split(':')[0].strip()
+    if candidate and candidate not in seen and os.path.isfile(candidate):
+        if Path(candidate).suffix.lower() in CODE_EXTS:
+            seen.add(candidate)
+
+if not seen:
+    sys.exit(0)
+
+try:
+    from agora_code.session import _get_project_id, _get_git_branch, _get_commit_sha
+    project_id = _get_project_id()
+    branch = _get_git_branch()
+    commit_sha = _get_commit_sha()
+except Exception:
+    project_id = branch = commit_sha = None
+
+try:
+    from agora_code.indexer import index_file
+    for fp in seen:
+        index_file(fp, project_id=project_id, branch=branch, commit_sha=commit_sha)
+except Exception:
+    pass
+
+sys.exit(0)
+PYEOF
+exit 0
+"""
+
     # --- on-edit.sh: re-index symbols after Claude edits a file ---
     on_edit = f"""#!/bin/sh
 INPUT=$(cat)
@@ -1460,6 +1532,7 @@ exit 0
     scripts = {
         "on-prompt.sh": on_prompt,
         "on-read.sh": on_read,
+        "on-grep.sh": on_grep,
         "on-edit.sh": on_edit,
         "on-bash.sh": on_bash,
         "on-stop.sh": on_stop,
@@ -1471,6 +1544,31 @@ exit 0
         p = hooks_dir / name
         p.write_text(content, encoding="utf-8")
         p.chmod(p.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+
+    # Install SKILL.md so Claude Code surfaces agora-code as a skill in this project
+    skill_md_content = _get_skill_md_content()
+    if skill_md_content:
+        skill_dir = claude_dir / "skills" / "agora-code"
+        skill_dir.mkdir(parents=True, exist_ok=True)
+        skill_path = skill_dir / "SKILL.md"
+        skill_path.write_text(skill_md_content, encoding="utf-8")
+        _echo(f"   {skill_path}")
+
+    # Register agora-memory MCP server via .mcp.json (Claude Code's MCP config file)
+    import json as _json
+    mcp_path = Path(".mcp.json")
+    mcp_config = {}
+    if mcp_path.exists():
+        try:
+            mcp_config = _json.loads(mcp_path.read_text(encoding="utf-8"))
+        except Exception:
+            mcp_config = {}
+    mcp_config.setdefault("mcpServers", {})["agora-memory"] = {
+        "command": agora_bin,
+        "args": ["memory-server"],
+    }
+    mcp_path.write_text(_json.dumps(mcp_config, indent=2), encoding="utf-8")
+    _echo(f"   {mcp_path}  (MCP server: agora-memory)")
 
     _echo("✅ Claude Code hooks installed:")
     _echo(f"   {hooks_json_path}")

@@ -41,13 +41,9 @@ vec     = ["sqlite-vec>=0.1"]
 # Uses bge-small-en-v1.5 by default (~130MB). Set LOCAL_EMBEDDING_MODEL to override.
 local   = ["sentence-transformers>=2.2"]
 
-# Memory integration
-memory  = ["agora-mem>=0.1.0"]
-
 # --- Enterprise edition ---
 enterprise = [
     "supabase>=2.0",
-    "agora-mem[supabase]>=0.1.0",
 ]
 
 # Dev / test
@@ -60,7 +56,7 @@ dev = [
 
 # Everything
 all = [
-    "agora-code[openai,gemini,llm,vec,local,memory,enterprise,dev]",
+    "agora-code[openai,gemini,llm,vec,local,enterprise,dev]",
 ]
 
 [project.scripts]
