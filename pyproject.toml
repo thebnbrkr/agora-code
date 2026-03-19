@@ -64,6 +64,7 @@ agora-code = "agora_code.cli:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["agora_code"]
+include = ["agora_code/SKILL.md"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

@@ -1317,10 +1317,10 @@ done
 
 
 def _get_skill_md_content() -> str | None:
-    """Return SKILL.md content, searching relative to this module or the package root."""
+    """Return SKILL.md content — bundled inside the package so it works after pip install."""
     candidates = [
-        Path(__file__).parent.parent / "skills" / "agora-code" / "SKILL.md",
-        Path(__file__).parent.parent / "SKILL.md",
+        Path(__file__).parent / "SKILL.md",                                    # installed package
+        Path(__file__).parent.parent / "skills" / "agora-code" / "SKILL.md",  # dev/editable
     ]
     for p in candidates:
         if p.exists():
