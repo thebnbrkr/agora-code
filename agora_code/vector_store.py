@@ -151,6 +151,7 @@ class VectorStore:
             ("project_id",   "TEXT"),
             ("status",       "TEXT DEFAULT 'uncommitted'"),  # uncommitted | committed
             ("committed_at", "TEXT"),
+            ("recorded_at_commit_sha", "TEXT"),  # HEAD when we recorded; never updated (commit_sha updated on tag_commit)
         ]:
             try:
                 conn.execute(f"ALTER TABLE file_changes ADD COLUMN {col} {defn}")
@@ -558,16 +559,20 @@ class VectorStore:
         branch: Optional[str] = None,
         project_id: Optional[str] = None,
     ) -> str:
-        """Store a summarized git diff for a file. Returns record ID."""
+        """Store a summarized git diff for a file. status defaults to 'uncommitted'.
+        recorded_at_commit_sha is set to current HEAD and never updated; commit_sha
+        is updated to the new commit when tag_committed_files() runs. Returns record ID."""
         conn = self._conn_()
         fid = str(uuid.uuid4())
         now = _now()
+        # Preserve HEAD at record time (tag_commit later updates commit_sha only)
+        recorded_sha = commit_sha
         conn.execute("""
             INSERT INTO file_changes
                 (id, file_path, diff_summary, diff_snippet, commit_sha,
-                 session_id, agent_id, branch, timestamp, project_id)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (fid, file_path, diff_summary, diff_snippet, commit_sha,
+                 recorded_at_commit_sha, session_id, agent_id, branch, timestamp, project_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (fid, file_path, diff_summary, diff_snippet, commit_sha, recorded_sha,
               session_id, agent_id, branch, now, project_id))
         conn.commit()
         return fid
@@ -580,7 +585,7 @@ class VectorStore:
         checkpoint has been called.
         """
         rows = self._conn_().execute("""
-            SELECT file_path, diff_summary, timestamp
+            SELECT file_path, diff_summary, timestamp, status, commit_sha, recorded_at_commit_sha
             FROM file_changes
             WHERE project_id = ?
             ORDER BY timestamp DESC
@@ -591,8 +596,8 @@ class VectorStore:
     def get_file_history(self, file_path: str, limit: int = 20) -> List[Dict]:
         """Return summarized change history for a specific file, newest first."""
         rows = self._conn_().execute("""
-            SELECT id, file_path, diff_summary, commit_sha, session_id,
-                   agent_id AS author, branch, timestamp
+            SELECT id, file_path, diff_summary, commit_sha, recorded_at_commit_sha,
+                   status, session_id, agent_id AS author, branch, timestamp
             FROM file_changes
             WHERE file_path = ?
             ORDER BY timestamp DESC
@@ -877,6 +882,26 @@ class VectorStore:
             """, (f"%{query}%", f"%{query}%", f"%{query}%", *params, k)).fetchall()
             return [dict(r) for r in rows]
 
+    def list_recent_symbol_notes_with_blocks(
+        self, limit: int = 10, project_id: Optional[str] = None
+    ) -> List[Dict]:
+        """Return recent symbol_notes including code_block (for memory --verbose)."""
+        params: list = []
+        where = ""
+        if project_id:
+            where = " AND (project_id = ? OR project_id IS NULL)"
+            params.append(project_id)
+        params.append(limit)
+        rows = self._conn_().execute(f"""
+            SELECT id, file_path, symbol_type, symbol_name, start_line, end_line,
+                   signature, note, code_block, timestamp
+            FROM symbol_notes
+            WHERE 1=1 {where}
+            ORDER BY timestamp DESC
+            LIMIT ?
+        """, params).fetchall()
+        return [dict(r) for r in rows]
+
     def tag_committed_files(
         self,
         file_paths: list[str],
@@ -884,12 +909,12 @@ class VectorStore:
         project_id: Optional[str] = None,
         branch: Optional[str] = None,
     ) -> int:
-        """Mark file_changes as committed + update symbol_notes commit_sha. Returns rows updated."""
+        """Mark file_changes as committed and set commit_sha on symbol_notes + file_snapshots.
+        Called from post-commit hook (e.g. track-diff after git commit). Returns file_changes rows updated."""
         conn = self._conn_()
         now = _now()
         updated = 0
         for fp in file_paths:
-            # Match both absolute (/path/to/repo/file.py) and relative (file.py) stored paths
             like_pat = f"%{fp}"
             r = conn.execute("""
                 UPDATE file_changes
@@ -900,6 +925,13 @@ class VectorStore:
             updated += r.rowcount
             conn.execute("""
                 UPDATE symbol_notes
+                SET commit_sha=?
+                WHERE file_path LIKE ?
+                  AND (project_id=? OR project_id IS NULL)
+                  AND (branch=? OR branch IS NULL)
+            """, (commit_sha, like_pat, project_id, branch))
+            conn.execute("""
+                UPDATE file_snapshots
                 SET commit_sha=?
                 WHERE file_path LIKE ?
                   AND (project_id=? OR project_id IS NULL)
@@ -1186,12 +1218,25 @@ class VectorStore:
     #  Misc                                                                     #
     # ----------------------------------------------------------------------- #
 
+    def list_recent_api_calls(self, limit: int = 20) -> List[Dict]:
+        """Return recent API calls (method, path, status, latency), newest first."""
+        rows = self._conn_().execute("""
+            SELECT session_id, timestamp, method, path,
+                   response_status, latency_ms, success, error_message
+            FROM api_calls
+            ORDER BY timestamp DESC
+            LIMIT ?
+        """, (limit,)).fetchall()
+        return [dict(r) for r in rows]
+
     def get_stats(self) -> Dict:
         conn = self._conn_()
         return {
             "sessions":        conn.execute("SELECT COUNT(*) FROM sessions").fetchone()[0],
             "learnings":       conn.execute("SELECT COUNT(*) FROM learnings").fetchone()[0],
             "api_calls":       conn.execute("SELECT COUNT(*) FROM api_calls").fetchone()[0],
+            "file_snapshots":  conn.execute("SELECT COUNT(*) FROM file_snapshots").fetchone()[0],
+            "symbol_notes":    conn.execute("SELECT COUNT(*) FROM symbol_notes").fetchone()[0],
             "vector_search":   self._vec_available,
             "db_path":         str(self.db_path),
         }

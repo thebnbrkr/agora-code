@@ -18,9 +18,10 @@ except Exception:
 # Refresh route cache quietly
 agora-code scan . --cache --quiet 2>/dev/null || true
 
-# Track diff for the edited file (only if we got a path)
+# Track diff + re-index AST so DB stays in sync with file content
 if [ -n "$FILE_PATH" ]; then
     agora-code track-diff "$FILE_PATH" 2>/dev/null || true
+    agora-code index "$FILE_PATH" 2>/dev/null || true
 fi
 
 exit 0

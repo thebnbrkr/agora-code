@@ -22,6 +22,10 @@ import re
 from pathlib import Path
 from typing import Optional
 
+# Stored code block cap per symbol (function/class body in symbol_notes.code_block)
+CODE_BLOCK_MAX_LINES = 120
+CODE_BLOCK_MAX_CHARS = 6000
+
 # Extensions supported by tree-sitter (subset of what summarizer handles)
 _CODE_EXTENSIONS = {
     ".py", ".js", ".ts", ".jsx", ".tsx", ".go", ".rs", ".java",
@@ -94,6 +98,11 @@ def index_file(
     Extract symbols from file and upsert into symbol_notes + file_snapshots.
     Deletes stale symbols for the file before re-indexing.
     Returns number of symbols indexed.
+
+    commit_sha: stored as-is (typically current HEAD at index time). We do not mark
+    symbol_notes/file_snapshots as "uncommitted". When a commit is made, the post-commit
+    hook calls tag_commit(), which updates commit_sha on symbol_notes and file_snapshots
+    to the new commit so the cache stays valid.
     """
     from agora_code.vector_store import get_store
     from agora_code.summarizer import summarize_file
@@ -407,18 +416,15 @@ def _first_docstring(lines: list[str], def_line: int) -> str:
 
 
 def _extract_code_block(lines: list[str], start_line: Optional[int], end_line: Optional[int]) -> Optional[str]:
-    """Slice source lines for a symbol. Caps at 120 lines / 6000 chars to keep storage sane."""
+    """Slice source lines for a symbol. Caps at CODE_BLOCK_MAX_LINES / CODE_BLOCK_MAX_CHARS to keep storage sane."""
     if start_line is None:
         return None
-    # Convert 1-based line numbers to 0-based indices
     start = max(0, start_line - 1)
     end = min(len(lines), (end_line or start_line + 50))
-    # Cap at 120 lines
-    end = min(end, start + 120)
+    end = min(end, start + CODE_BLOCK_MAX_LINES)
     block = "\n".join(lines[start:end])
-    # Cap at 6000 chars
-    if len(block) > 6000:
-        block = block[:6000] + "\n# ... (truncated)"
+    if len(block) > CODE_BLOCK_MAX_CHARS:
+        block = block[:CODE_BLOCK_MAX_CHARS] + "\n# ... (truncated)"
     return block or None
 
 

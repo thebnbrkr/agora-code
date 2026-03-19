@@ -328,7 +328,12 @@ async def _handle_save_checkpoint(params: dict) -> str:
 async def _handle_store_learning(params: dict, namespace: str = "personal") -> str:
     from agora_code.vector_store import get_store
     from agora_code.embeddings import get_embedding
-    from agora_code.session import load_session, _get_git_branch, _get_uncommitted_files
+    from agora_code.session import (
+        load_session,
+        _get_git_branch,
+        _get_project_id,
+        _get_uncommitted_files,
+    )
 
     finding = params.get("finding", "")
     embedding = get_embedding(finding)
@@ -336,6 +341,7 @@ async def _handle_store_learning(params: dict, namespace: str = "personal") -> s
 
     # Auto-capture git context at the moment of storing
     branch = _get_git_branch()
+    project_id = _get_project_id()
     files = _get_uncommitted_files()
     # Also pull files from active session if available
     session = load_session()
@@ -352,6 +358,7 @@ async def _handle_store_learning(params: dict, namespace: str = "personal") -> s
         branch=branch,
         files=files,
         namespace=namespace,
+        project_id=project_id,
     )
     scope = " [team]" if namespace == "team" else ""
     return f"Stored{scope}: {finding[:80]}{'...' if len(finding) > 80 else ''}"

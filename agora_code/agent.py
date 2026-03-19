@@ -1,10 +1,10 @@
 """
-agent.py — MCP server backed by agora-mem's MemoryNode lifecycle.
+agent.py — MCP server with optional memory backend (MemoryNode lifecycle).
 
-Each API route becomes an APICallNode(MemoryNode):
-  prep_async   → load historical stats for this route from agora-mem
+Each API route becomes an APICallNode:
+  prep_async   → load historical stats for this route (when memory backend available)
   exec_async   → execute the real HTTP request
-  post_async   → merge + save updated stats back to agora-mem
+  post_async   → merge + save updated stats (when memory backend available)
 
 MCPServer exposes all nodes as MCP tools over stdio.
 Compatible with Claude Desktop, Cline, and any JSON-RPC 2.0 MCP client.
@@ -41,8 +41,8 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from agora_code.models import Route, RouteCatalog
 
-# agora-mem is optional — import at class definition time so we can
-# pick the right base class.
+# Optional memory backend — import at class definition time so we can
+# pick the right base class when available.
 try:
     from agora_mem.node import MemoryNode as _MemoryNodeBase
     from agora_mem.store import MemoryStore
@@ -53,24 +53,24 @@ except ImportError:
 
 
 # --------------------------------------------------------------------------- #
-#  APICallNode — MemoryNode subclass (or plain class if agora-mem missing)    #
+#  APICallNode — MemoryNode subclass (or plain class if memory backend missing) #
 # --------------------------------------------------------------------------- #
 
 class APICallNode(_MemoryNodeBase):  # type: ignore[misc]
     """
-    Wraps one Route in agora-mem's MemoryNode prep→exec→post lifecycle.
+    Wraps one Route in prep→exec→post lifecycle (with optional memory backend).
 
     Session key pattern:  "route:{METHOD}:{path}"
     Stats are kept separate from raw HTTP results — post_async saves
     accumulated stats (call count, success rate, latency p50, last error)
     rather than the raw HTTP body, so the session is always meaningful.
 
-    Falls back to a no-memory mode if agora-mem is not installed.
+    Falls back to a no-memory mode if the optional memory backend is not installed.
 
     Args:
         route:         the Route this node handles
         base_url:      e.g. "http://localhost:8000"
-        memory_store:  agora_mem.MemoryStore instance, or None
+        memory_store:  optional memory store instance, or None
         auth:          {"type": "bearer"|"api-key"|"basic", "token": "..."}
     """
 
@@ -450,7 +450,7 @@ class MCPServer:
             except Exception:
                 pass
 
-        # ── agora-mem per-route stats (existing feature) ──────────────────
+        # ── optional memory backend: per-route stats ────────────────────────
         if context_lines:
             lines.extend(context_lines)
             lines.append("")

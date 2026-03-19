@@ -7,7 +7,7 @@ agora-code does two things:
 1. **Persistent session memory** — your AI assistant always knows where you left off, what you discovered, and what changed. Survives context window resets, new conversations, and multiple agents working in parallel.
 2. **API discovery + MCP server** — scans any codebase (Python, OpenAPI spec) and exposes every endpoint as an MCP tool so an AI can call your API directly.
 
-Works with **Claude Code**, **Cursor**, **Gemini CLI**, **Copilot CLI**, **Cline**, and any MCP-compatible assistant.
+Works with **Claude Code**, **Cursor**, **Gemini CLI** (hooks untested), **Copilot CLI**, **Cline**, and any **MCP-compatible** assistant (e.g. VS Code with an MCP extension, GitHub Copilot Chat with MCP). **Key split:** Claude Code = mostly hooks; Cursor = hooks + MCP tools. The **memory server** is standard stdio JSON-RPC — we are not tied to Cursor’s MCP; any client that can spawn a process and speak MCP can use `agora-code memory-server`. Hooks (inject on start, track-diff on edit) are **editor-specific** and only run where that editor supports them (Cursor, Claude Code, Copilot CLI, etc.).
 
 ---
 
@@ -15,6 +15,8 @@ Works with **Claude Code**, **Cursor**, **Gemini CLI**, **Copilot CLI**, **Cline
 
 - [How It Works](#how-it-works)
 - [Installation](#installation)
+- [First-time setup: how to run it](#first-time-setup-how-to-run-it)
+- [Cursor setup (quick start)](#cursor-setup-quick-start)
 - [Claude Code Plugin — One-Command Setup](#claude-code-plugin--one-command-setup)
 - [Manual Hook Setup by Agent](#manual-hook-setup-by-agent)
 - [Session Lifecycle](#session-lifecycle)
@@ -26,7 +28,7 @@ Works with **Claude Code**, **Cursor**, **Gemini CLI**, **Copilot CLI**, **Cline
 - [Git Integration](#git-integration)
 - [Team Namespaces](#team-namespaces)
 - [API Discovery + MCP Server](#api-discovery--mcp-server)
-- [Storage Architecture](#storage-architecture)
+- [Storage Architecture](#storage-architecture) (includes **where AI context is sourced from**)
 - [Compression Levels](#compression-levels)
 - [Environment Variables](#environment-variables)
 
@@ -118,6 +120,104 @@ which agora-code
 
 ---
 
+## First-time setup: how to run it
+
+**1. Install the CLI** (once):
+
+```bash
+pip install git+https://github.com/thebnbrkr/agora-code
+```
+
+**2a. Cursor (hooks)** — so inject, summarize, and DB updates run automatically:
+
+- **Option A:** This repo already has `.cursor/hooks.json` and `.cursor/hooks/*.sh`. If you cloned the repo, ensure the hook scripts are executable: `chmod +x .cursor/hooks/*.sh`. Restart Cursor. Session start will run `agora-code inject`; edits will run `track-diff` + `index` (DB AST updated on every edit, no commit required).
+- **Option B:** In a different project, copy `.cursor/hooks.json` and the `.cursor/hooks/` folder from this repo into your project, then `chmod +x .cursor/hooks/*.sh`, then restart Cursor.
+
+**2b. Cursor (MCP)** — so the agent can call get_session_context, save_checkpoint, etc.:
+
+- Add to Cursor MCP settings (e.g. **Settings → MCP → Edit in settings.json**). Use the full path to `agora-code`:
+
+```json
+{
+  "mcpServers": {
+    "agora-memory": {
+      "command": "/path/from/which/agora-code/agora-code",
+      "args": ["memory-server"]
+    }
+  }
+}
+```
+
+- Restart Cursor. The MCP server runs when Cursor starts; you don’t run `agora-code memory-server` in a terminal yourself.
+
+**2c. Claude Code** — use the plugin (see below) or run `agora-code install-hooks --claude-code` in the project, then run `./setup.sh` and restart Claude Code.
+
+**3. Confirm it’s working:** Run `agora-code status` (you should see the DB path and counts). Run `agora-code memory` to see sessions, learnings, snapshots, symbols (no SQL).
+
+---
+
+## Cursor setup (quick start)
+
+**Is it easy?** Yes. Install once, add hooks (or copy from this repo), add one MCP server in Cursor settings, and restart. No code changes required.
+
+### Step 1: Install the CLI (once)
+
+```bash
+pip install git+https://github.com/thebnbrkr/agora-code
+which agora-code   # copy this path for Step 3
+```
+
+### Step 2: Hooks (session inject + file tracking)
+
+**Option A — You're in the agora-code repo:** Hooks are already here. Make scripts executable and restart Cursor:
+
+```bash
+chmod +x .cursor/hooks/*.sh
+# Restart Cursor
+```
+
+**Option B — Another project:** Copy the hook config and scripts from this repo:
+
+```bash
+mkdir -p .cursor/hooks
+cp /path/to/agora-code/.cursor/hooks.json .cursor/
+cp /path/to/agora-code/.cursor/hooks/*.sh .cursor/hooks/
+chmod +x .cursor/hooks/*.sh
+# Restart Cursor
+```
+
+After this, Cursor runs `agora-code inject` on session start and `track-diff` + `index` after every file edit so the DB stays in sync.
+
+### Step 3: MCP (so the AI can call session/checkpoint/learn/recall)
+
+1. In Cursor: **Settings → MCP** (or **Cursor Settings → Features → MCP**).
+2. Open **Edit in settings.json** (or add the block to your MCP config).
+3. Add the memory server (use the path from `which agora-code`):
+
+```json
+{
+  "mcpServers": {
+    "agora-memory": {
+      "command": "/full/path/from/which/agora-code/agora-code",
+      "args": ["memory-server"]
+    }
+  }
+}
+```
+
+4. Save and **restart Cursor**. You do not run `agora-code memory-server` in a terminal — Cursor starts it automatically.
+
+### Step 4: Verify
+
+```bash
+agora-code status
+agora-code memory
+```
+
+You should see the DB path and row counts. The AI in Cursor can then use inject, checkpoint, learn, and recall via MCP.
+
+---
+
 ## Claude Code Plugin — One-Command Setup
 
 The easiest way to use agora-code with Claude Code. Install once and it works in every project — no `CLAUDE.md` edits, no manual hook setup.
@@ -152,9 +252,11 @@ The plugin ships all hooks: `SessionStart`, `UserPromptSubmit`, `PreToolUse`, `P
 agora-code install-hooks --claude-code
 ```
 
-This generates `.claude/hooks.json` and the required hook scripts with correct paths for your machine. Restart Claude Code after running.
+This generates **only** `.claude/settings.json` and the shell scripts under `.claude/hooks/`. It does **not** generate `SKILL.md` or `CLAUDE.md`. To get the skill so Claude knows when to run inject/summarize/recall/learn: run `./setup.sh` (copies `skills/agora-code/SKILL.md` to `~/.claude/skills/agora-code/SKILL.md`), or copy that file manually. The **Cursor** `.mdc` file (`.cursor/rules/agora.mdc`) is **not** auto-generated; it lives in this repo — copy `.cursor/rules/agora.mdc` into your project if you use Cursor. Restart Claude Code (or Cursor) after any hook/skill change.
 
-**Or manually** — create `.claude/hooks.json`:
+**Install verification:** (1) Run `agora-code install-hooks --claude-code`; (2) Run `./setup.sh` so the skill is available; (3) Restart Claude Code; (4) Run `agora-code status` to confirm DB path.
+
+**Or manually** — create `.claude/settings.json`:
 
 ```json
 {
@@ -239,6 +341,7 @@ except Exception:
 agora-code scan . --cache --quiet 2>/dev/null || true
 if [ -n "$FILE_PATH" ]; then
     agora-code track-diff "$FILE_PATH" 2>/dev/null || true
+    agora-code index "$FILE_PATH" 2>/dev/null || true
 fi
 exit 0
 ```
@@ -257,6 +360,8 @@ Make scripts executable: `chmod +x .cursor/hooks/*.sh`
 > **Important:** Cursor requires `"version": 1` at the top of `hooks.json` and camelCase event names (`sessionStart`, `afterFileEdit`, `preCompact`). Hook scripts must be separate files — inline commands are not supported.
 
 ### Gemini CLI
+
+**Note:** Gemini CLI hook config and scripts are provided as-is; they are not currently tested in CI. Prefer Claude Code or Cursor for the best-tested experience.
 
 Create `.gemini/settings.json`:
 
@@ -305,6 +410,8 @@ Create `.github/hooks/agora-code.json`:
 
 A **session** is a goal-oriented work period. It spans context window resets, new conversations, and agent restarts — until you explicitly call `complete`.
 
+**Database:** `inject` only reads from the DB (sessions, learnings). Writes happen on `checkpoint`, `learn`, on-stop, indexing (read/edit hooks), and `track-diff`.
+
 ```
 Start of work
       │
@@ -350,7 +457,7 @@ agora-code complete --summary "Fixed the 422 bug — email regex was too strict"
 
 ## MCP Tools Reference
 
-The memory server exposes tools to any MCP-compatible AI assistant via `agora-code memory-server`.
+The memory server exposes tools to any MCP-compatible AI assistant via `agora-code memory-server`. **Not Cursor-only:** use it from VS Code (with an MCP extension), GitHub Copilot Chat (when it supports MCP), Claude Desktop, Cline, or any client that can run a subprocess and speak the MCP protocol. Add the same `agora-memory` server config (command = full path to `agora-code`, args = `["memory-server"]`) in that editor’s MCP settings. Hooks (inject on start, track-diff on edit) depend on the editor: Cursor has `.cursor/hooks`, Claude Code has `.claude/settings.json`, Copilot CLI has `.github/hooks/`; VS Code/Copilot Chat may only have MCP and no file-edit hooks unless that editor adds hook support.
 
 ### `get_session_context`
 
@@ -495,11 +602,58 @@ Edit `~/Library/Application Support/Claude/claude_desktop_config.json`:
 
 ## CLI Reference
 
+### All CLI commands (summary)
+
+| Command | Purpose |
+|--------|--------|
+| `agora-code status` | Current session + DB path and row counts |
+| `agora-code memory` [N] | Dump DB: sessions, learnings, snapshots, symbols; `--verbose` for AST/code blocks |
+| `agora-code list-sessions` | List sessions (no SQL) |
+| `agora-code list-learnings` | List learnings |
+| `agora-code list-snapshots` | List file_snapshots (AST) |
+| `agora-code list-symbols` [--file PATH] | List symbol_notes |
+| `agora-code list-file-changes` | List file_changes; shows [uncommitted]/[committed] + SHA |
+| `agora-code list-api-calls` | List API call log |
+| `agora-code inject` | Load session context (used by hooks); `--level`, `--token-budget`, `--raw` |
+| `agora-code checkpoint` | Save goal, hypothesis, files changed, next steps, blockers |
+| `agora-code complete` | Archive session with summary/outcome |
+| `agora-code restore` [SESSION_ID] | List or restore a past session |
+| `agora-code learn` | Store a permanent finding; `--tags`, `--confidence` |
+| `agora-code recall` "<query>" | Search learnings |
+| `agora-code file-history <path>` | Per-file change history |
+| `agora-code track-diff <path>` | Capture git diff for one file |
+| `agora-code track-diff --all` | Track all uncommitted files |
+| `agora-code index <path>` | Re-index file into DB (symbol_notes + file_snapshots) |
+| `agora-code summarize <path>` | File structure summary; uses DB cache when same commit |
+| `agora-code install-hooks --claude-code` | Generate .claude/settings.json + hooks |
+| `agora-code memory-server` | Start MCP server (stdio); used by Cursor/VS Code/Claude Desktop |
+| `agora-code scan <target>` | Discover API routes |
+| `agora-code serve` | Start API MCP server for a codebase |
+| `agora-code stats` | API call stats |
+| `agora-code chat` | Interactive API chat |
+| `agora-code agentify` | Detect workflows, generate flow code |
+
+**CLI output:** We use **rich** (colors, tables) when available; otherwise plain `click.echo`. Install `rich` for prettier output; the CLI works without it.
+
 ### Session management
 
 ```bash
-# Show current session + DB stats
+# Show current session + DB stats (includes DB path)
 agora-code status
+
+# Dump DB summary: path, counts, last N sessions and learnings
+agora-code memory
+agora-code memory --limit 20
+# For full inspection: sqlite3 <path from status or memory>
+
+# See every DB table without SQL
+agora-code list-sessions    # sessions
+agora-code list-learnings   # learnings
+agora-code list-snapshots  # file_snapshots (AST)
+agora-code list-symbols    # symbol_notes; use --file path to filter
+agora-code list-file-changes   # file_changes; use file-history <path> for one file
+agora-code list-api-calls  # api_calls
+# See docs/DATABASE_AND_STRUCTURED_LAYER.md for the full table.
 
 # Load and print session context (used by hooks)
 agora-code inject
@@ -547,6 +701,7 @@ agora-code file-history agora_code/auth.py
 
 # Manually capture a file's git diff
 agora-code track-diff agora_code/auth.py
+agora-code track-diff --all   # all uncommitted files
 agora-code track-diff agora_code/auth.py --committed  # vs last commit
 ```
 
@@ -615,8 +770,11 @@ Falls back to the current directory name if no git remote is set.
 
 Every time the AI edits a file, agora-code captures what changed and stores a compact summary. This builds a per-file history queryable without reading the file.
 
+- **file_changes** rows start as `status='uncommitted'` with `commit_sha` = current HEAD and **recorded_at_commit_sha** = same (HEAD when we recorded). When you commit, the post-commit flow runs `tag_commit()` and updates those rows: `commit_sha` → new commit, `status` → `'committed'`. So we track both "recorded when HEAD was X" and "included in commit Y". See [docs/DATABASE_AND_STRUCTURED_LAYER.md](docs/DATABASE_AND_STRUCTURED_LAYER.md).
+
 ```bash
 agora-code file-history agora_code/auth.py
+agora-code list-file-changes   # shows [uncommitted] or [committed] and commit SHA
 
 # Change history for agora_code/auth.py (3 entries):
 # • 2026-03-14 [main] @abc123def456: added _get_project_id(), updated update_session
@@ -624,7 +782,9 @@ agora-code file-history agora_code/auth.py
 # • 2026-03-10 [feat/auth]: initial auth implementation
 ```
 
-The `PostToolUse` hook runs `track-diff` automatically on every file write.
+The Cursor `afterFileEdit` hook and Claude Code `PostToolUse` hook run `track-diff` (and `index`) automatically on every file write. To track all uncommitted files at once: `agora-code track-diff --all`.
+
+**Untracked files:** Initially, untracked files were not stored in the DB — you could rely on `git status` for that. We **do** store them now: when `track-diff` runs on a path and `git diff` is empty, we check `git status`; if the file is `??` (untracked), we still write a `file_changes` row with diff summary `[new untracked file: path]`. So the DB has a record of "this new file was added" and it shows up in file history and in inject context (e.g. uncommitted file list). You still get full untracked-file visibility from git; the DB adds a persistent log of when the file was first seen. No change to git behavior; we only add DB rows.
 
 ---
 
@@ -703,11 +863,32 @@ agora-code serve ./my-api --url http://localhost:7755 --auth-token mytoken
 
 ~/.agora-code/
   memory.db             SQLite database (global — all projects)
-    ├── sessions         Archived session records
-    ├── learnings        Permanent findings + embeddings
-    ├── file_changes     Per-file git diff history
+    ├── sessions         Archived session records (goal, status, session_data)
+    ├── learnings        Permanent findings, checkpoints, decisions (FTS5 + optional vec)
+    ├── file_changes     Per-file git diff history (status: uncommitted → committed; recorded_at_commit_sha + commit_sha)
+    ├── file_snapshots   AST summary per (project, file, branch) — from read/edit
+    ├── symbol_notes     Per-symbol (function/class) signature + code_block
     └── api_calls        HTTP interaction log (serve/chat mode)
 ```
+
+**Stored code block limit:** Each function/class body stored in `symbol_notes.code_block` is capped at **120 lines** and **6000 characters** (constants in `agora_code/indexer.py`). Longer functions are truncated in the DB. **The AI is not guaranteed to "read the file instead of the DB" when a function is over 120 lines** — we simply never serve that truncated block to the AI in the main flows. MCP `get_file_symbols` and inject only return **symbol names and line numbers** (no code body). So when the AI wants the actual function body, it uses the **Read** tool with path + offset + limit, which reads from **disk** and gets the full function every time. The 120-line cap only affects what we store and what you see in `agora-code memory --verbose`.
+
+**Where AI context is sourced from (summary):**
+
+| What the AI sees | Source | Notes |
+|------------------|--------|------|
+| Session goal, hypothesis, last steps, next steps, blockers | **DB** (sessions, learnings) + `session.json` | `inject` / `get_session_context` build this from DB and live git. |
+| Relevant past findings | **DB** (learnings, FTS5/vector) | `recall_learnings` / on-prompt.sh. |
+| File structure outline (large file) | **DB** when cached | `file_snapshots` at same commit; else we read file and summarize. |
+| List of functions/classes + line numbers | **DB** (`symbol_notes`) | Names and lines only; we do **not** send the stored code body (truncated at 120 lines) to the AI. |
+| Full file or function body | **File (disk)** | Read tool; always full content. |
+| Edits | **File (disk)** | All edits go to the real file; hooks then update the DB. |
+
+So: **DB** = session state, learnings, file/symbol metadata and cached summaries. **File** = actual file content. The truncated `symbol_notes.code_block` is only used for `agora-code memory --verbose` (human inspection), not for AI context. See [docs/DATABASE_AND_STRUCTURED_LAYER.md](docs/DATABASE_AND_STRUCTURED_LAYER.md).
+
+**Paths:** We do not hardcode machine-specific paths (e.g. `/Users/...`) in code; we use `Path.home()`, `/tmp`, and placeholders in docs. The **Claude Code hooks** (`.claude/hooks/*`) use only `Path.home()`, `/tmp`, and `shutil.which("agora-code")` — no fixed install paths. File paths stored in the DB are **resolved to absolute** when indexing, so the DB can contain machine-specific paths; copying the DB to another machine may require re-indexing for path lookups to match.
+
+**Full DB structure, query patterns, and structured inject layer:** see [docs/DATABASE_AND_STRUCTURED_LAYER.md](docs/DATABASE_AND_STRUCTURED_LAYER.md).
 
 Override the DB path:
 

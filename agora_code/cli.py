@@ -442,6 +442,247 @@ def status():
 
 
 # --------------------------------------------------------------------------- #
+#  memory                                                                     #
+# --------------------------------------------------------------------------- #
+
+@main.command()
+@click.option("--limit", "-n", default=10, help="Max sessions and learnings to list (default 10)")
+@click.option("--verbose", "-v", is_flag=True, help="Show stored AST summaries and code blocks from the DB")
+@click.argument("limit_arg", required=False, type=int)
+def memory(limit, limit_arg, verbose):
+    """Show DB path, counts, and a short dump of recent sessions and learnings.
+
+    Each time a file is read and indexed (on-read / on-edit hooks), we store:
+    - The full AST summary in file_snapshots.summary
+    - The full code block (source lines) per function/class in symbol_notes.code_block
+    Use --verbose to print a sample of that stored content.
+
+    For full inspection: sqlite3 <path from status or memory>.
+
+    Examples:
+      agora-code memory
+      agora-code memory 20
+      agora-code memory --limit 20 --verbose
+    """
+    if limit_arg is not None:
+        limit = limit_arg
+    from agora_code.vector_store import get_store
+
+    store = get_store()
+    stats = store.get_stats()
+    _echo(f"DB path: {stats['db_path']}")
+    _echo(f"Counts:  {stats['sessions']} sessions, {stats['learnings']} learnings, "
+          f"{stats['api_calls']} API calls, {stats.get('file_snapshots', 0)} file snapshots (AST), "
+          f"{stats.get('symbol_notes', 0)} symbol notes  [vector: {'on' if stats['vector_search'] else 'off'}]")
+    _echo("")
+
+    sessions = store.list_sessions(limit=limit)
+    if sessions:
+        _echo(f"Recent sessions (last {len(sessions)}):")
+        for s in sessions:
+            status_icon = {"in_progress": "🔄", "complete": "✅", "abandoned": "❌"}.get(
+                s.get("status", ""), "📋"
+            )
+            goal_str = s.get("goal") or ""
+            goal = goal_str[:50] + ("..." if len(goal_str) > 50 else "")
+            _echo(f"  {status_icon} {s.get('session_id', '')[:44]}  {s.get('last_active', '')[:10]}  {goal}")
+        _echo("")
+    else:
+        _echo("No sessions in DB yet.")
+        _echo("")
+
+    learnings = store.search_learnings_keyword("", k=limit)
+    if learnings:
+        _echo(f"Recent learnings (last {len(learnings)}):")
+        for L in learnings:
+            finding_str = L.get("finding") or ""
+            finding = finding_str[:60] + ("..." if len(finding_str) > 60 else "")
+            _echo(f"  · [{L.get('type', 'finding')}] {finding}")
+        _echo("")
+    else:
+        _echo("No learnings in DB yet.")
+        _echo("")
+
+    # Indexed files (AST summaries from read/edit hooks)
+    snapshots = store.search_file_snapshots("", k=limit)
+    if snapshots:
+        _echo(f"Indexed files (AST snapshots, last {len(snapshots)}):")
+        for snp in snapshots:
+            fp = snp.get("file_path", "")
+            ts = (snp.get("timestamp") or "")[:10]
+            summary = (snp.get("summary") or "").strip()
+            symbols_col = snp.get("symbols") or ""
+            n_symbols = len(symbols_col.split("\n")) if symbols_col else 0
+            try:
+                import json
+                names = json.loads(symbols_col) if symbols_col.strip().startswith("[") else []
+                n_symbols = len(names) if isinstance(names, list) else n_symbols
+            except Exception:
+                pass
+            _echo(f"  📄 {fp}  [{ts}]  {n_symbols} symbols")
+            if summary:
+                preview = summary[:80] + ("..." if len(summary) > 80 else "")
+                _echo(f"      {preview}")
+            if verbose and summary:
+                # Show stored AST summary (first 400 chars)
+                excerpt = summary[:400] + ("\n      ... [truncated]" if len(summary) > 400 else "")
+                for line in excerpt.splitlines():
+                    _echo(f"      | {line}")
+        _echo("")
+    else:
+        _echo("No file snapshots (AST) in DB yet. Read/edit hooks populate these.")
+        _echo("")
+
+    # Symbol index (functions/classes from AST) — each has code_block stored
+    symbols = store.search_symbol_notes("", k=min(limit * 3, 50))
+    if symbols:
+        _echo(f"Symbol index (functions/classes, sample {len(symbols)}):")
+        for sym in symbols:
+            fp = sym.get("file_path", "")
+            name = sym.get("symbol_name", "")
+            stype = sym.get("symbol_type", "?")
+            line = sym.get("start_line") or "?"
+            sig = (sym.get("signature") or "").strip()[:50]
+            if len((sym.get("signature") or "")) > 50:
+                sig += "..."
+            _echo(f"  {stype}: {name} @ {fp}:{line}  {sig}")
+        _echo("")
+        if verbose:
+            syms_with_blocks = store.list_recent_symbol_notes_with_blocks(limit=5)
+            if syms_with_blocks:
+                _echo("Stored code blocks (sample, last 5 by timestamp):")
+                for sym in syms_with_blocks:
+                    block = (sym.get("code_block") or "").strip()
+                    if not block:
+                        continue
+                    _echo(f"  --- {sym.get('symbol_type')} {sym.get('symbol_name')} @ {sym.get('file_path')}:{sym.get('start_line')} ---")
+                    lines = block.splitlines()[:25]
+                    for ln in lines:
+                        _echo(f"  | {ln}")
+                    if block.count("\n") >= 25:
+                        _echo("  | ... [truncated]")
+                    _echo("")
+    else:
+        _echo("No symbol notes in DB yet. Read/edit hooks populate these.")
+        _echo("")
+
+    _echo("For full inspection: sqlite3 " + stats["db_path"])
+
+
+# --------------------------------------------------------------------------- #
+#  list-* — see every DB table without SQL                                     #
+# --------------------------------------------------------------------------- #
+
+@main.command("list-sessions")
+@click.option("--limit", "-n", default=20, help="Max sessions to show")
+def list_sessions(limit):
+    """List sessions in the DB (no SQL). Same data as memory, sessions section."""
+    from agora_code.vector_store import get_store
+    from agora_code.session import _get_project_id
+    store = get_store()
+    pid = _get_project_id()
+    sessions = store.list_sessions(limit=limit, project_id=pid)
+    if not sessions:
+        _echo("No sessions in DB. Use checkpoint / complete to create some.")
+        return
+    _echo(f"Sessions (last {len(sessions)}):")
+    for s in sessions:
+        status_icon = {"in_progress": "🔄", "complete": "✅", "abandoned": "❌"}.get(s.get("status", ""), "📋")
+        goal = (s.get("goal") or "")[:60]
+        _echo(f"  {status_icon} {s.get('session_id', '')[:44]}  {s.get('last_active', '')[:10]}  {goal}")
+
+
+@main.command("list-learnings")
+@click.option("--limit", "-n", default=20, help="Max learnings to show")
+def list_learnings(limit):
+    """List recent learnings in the DB (no SQL)."""
+    from agora_code.vector_store import get_store
+    store = get_store()
+    learnings = store.search_learnings_keyword("", k=limit)
+    if not learnings:
+        _echo("No learnings in DB. Use learn or let on-stop extract from transcripts.")
+        return
+    _echo(f"Learnings (last {len(learnings)}):")
+    for L in learnings:
+        finding = (L.get("finding") or "")[:80]
+        _echo(f"  [{L.get('type', 'finding')}] {finding}")
+
+
+@main.command("list-snapshots")
+@click.option("--limit", "-n", default=20, help="Max file snapshots to show")
+def list_snapshots(limit):
+    """List file_snapshots (AST summaries) in the DB (no SQL)."""
+    from agora_code.vector_store import get_store
+    store = get_store()
+    snapshots = store.search_file_snapshots("", k=limit)
+    if not snapshots:
+        _echo("No file snapshots. Read/edit hooks populate these when you open or edit files.")
+        return
+    _echo(f"File snapshots (last {len(snapshots)}):")
+    for s in snapshots:
+        _echo(f"  📄 {s.get('file_path', '')}  {s.get('timestamp', '')[:10]}")
+
+
+@main.command("list-symbols")
+@click.option("--limit", "-n", default=30, help="Max symbol notes to show")
+@click.option("--file", "file_path", default=None, help="Filter by file path")
+def list_symbols(limit, file_path):
+    """List symbol_notes (functions/classes) in the DB (no SQL)."""
+    from agora_code.vector_store import get_store
+    from agora_code.session import _get_project_id, _get_git_branch
+    store = get_store()
+    if file_path:
+        syms = store.get_symbols_for_file(file_path, project_id=_get_project_id(), branch=_get_git_branch())
+        syms = syms[:limit] if syms else []
+    else:
+        syms = store.search_symbol_notes("", k=limit)
+    if not syms:
+        _echo("No symbol notes. Read/edit hooks populate these when you open or edit code files.")
+        return
+    _echo(f"Symbol notes ({len(syms)}):")
+    for s in syms:
+        _echo(f"  {s.get('symbol_type', '?')}: {s.get('symbol_name', '')} @ {s.get('file_path', '')}:{s.get('start_line', '?')}")
+
+
+@main.command("list-file-changes")
+@click.option("--limit", "-n", default=20, help="Max file changes to show")
+def list_file_changes(limit):
+    """List recent file_changes in the DB (no SQL). Per-file history: file-history <path>."""
+    from agora_code.vector_store import get_store
+    from agora_code.session import _get_project_id
+    store = get_store()
+    pid = _get_project_id()
+    if not pid:
+        _echo("No project_id (e.g. not in a git repo). file-history <path> still works.")
+        return
+    changes = store.get_recent_file_changes_for_project(pid, limit=limit)
+    if not changes:
+        _echo("No file changes in DB. Edits + track-diff populate these.")
+        return
+    _echo(f"File changes (last {len(changes)}):")
+    for c in changes:
+        st = c.get("status") or "uncommitted"
+        sha = c.get("commit_sha") or c.get("recorded_at_commit_sha") or ""
+        sha_str = f"  [{st}]" + (f" {sha[:8]}" if sha else "")
+        _echo(f"  {c.get('file_path', '')}  {c.get('timestamp', '')[:10]}{sha_str}  {(c.get('diff_summary') or '')[:50]}")
+
+
+@main.command("list-api-calls")
+@click.option("--limit", "-n", default=20, help="Max API calls to show")
+def list_api_calls(limit):
+    """List recent api_calls in the DB (no SQL). From serve/chat when calling an API."""
+    from agora_code.vector_store import get_store
+    store = get_store()
+    calls = store.list_recent_api_calls(limit=limit)
+    if not calls:
+        _echo("No API calls in DB. Use agora-code serve/chat to log calls.")
+        return
+    _echo(f"API calls (last {len(calls)}):")
+    for c in calls:
+        _echo(f"  {c.get('method', '')} {c.get('path', '')}  {c.get('response_status')}  {c.get('latency_ms')}ms")
+
+
+# --------------------------------------------------------------------------- #
 #  state                                                                       #
 # --------------------------------------------------------------------------- #
 
@@ -632,10 +873,14 @@ def learn(finding, endpoint, api, evidence, confidence, tags):
     """
     from agora_code.vector_store import get_store
     from agora_code.embeddings import get_embedding
-    from agora_code.session import load_session
+    from agora_code.session import load_session, _get_project_id, _get_git_branch
 
     session = load_session()
     session_id = session.get("session_id") if session else None
+    # Important: learnings must be stored with the current repo's project_id.
+    # `agora-code inject` scopes by project_id when building the context.
+    project_id = _get_project_id()
+    branch = _get_git_branch()
 
     method = path = None
     if endpoint:
@@ -656,6 +901,8 @@ def learn(finding, endpoint, api, evidence, confidence, tags):
         confidence=confidence,
         tags=tag_list,
         embedding=embed,
+        project_id=project_id,
+        branch=branch,
     )
     _echo(f"✅ Learning stored (id: {lid[:8]}…)")
     if embed is None:
@@ -726,28 +973,74 @@ def recall(query, limit):
 
 
 # --------------------------------------------------------------------------- #
+#  index                                                                       #
+# --------------------------------------------------------------------------- #
+
+@main.command()
+@click.argument("file_path", type=click.Path(exists=True))
+def index(file_path):
+    """Re-index a file into the DB (symbol_notes + file_snapshots). Call after edits so the AST cache stays in sync.
+
+    Hooks (e.g. on-edit, after-file-edit) should call this so each change updates the DB.
+    """
+    from agora_code.indexer import index_file
+    from agora_code.session import _get_project_id, _get_git_branch, _get_commit_sha
+    path = Path(file_path).resolve()
+    count = index_file(
+        str(path),
+        project_id=_get_project_id(),
+        branch=_get_git_branch(),
+        commit_sha=_get_commit_sha(),
+    )
+    if count:
+        _echo(f"✅ Indexed {path.name}: {count} symbols, AST snapshot updated.")
+    else:
+        _echo(f"📄 {path.name}: not a code file or no symbols extracted (no DB update).")
+
+
+# --------------------------------------------------------------------------- #
 #  track-diff                                                                  #
 # --------------------------------------------------------------------------- #
 
 @main.command("track-diff")
-@click.argument("file_path")
+@click.argument("file_path", required=False)
+@click.option("--all", "all_files", is_flag=True, default=False,
+              help="Track all uncommitted (staged + unstaged) files")
 @click.option("--committed", is_flag=True, default=False,
               help="Diff against HEAD~1 (last commit) rather than working tree")
-def track_diff(file_path, committed):
+def track_diff(file_path, all_files, committed):
     """Capture a git diff for a file and store a compact summary in memory.
 
     \b
-    Called automatically by PostToolUse hook after Write/Edit.
-    Can also be run manually:
+    Called automatically by hooks after file edit. Run manually:
 
     agora-code track-diff agora_code/auth.py
+    agora-code track-diff --all
     agora-code track-diff agora_code/auth.py --committed
     """
     import subprocess as sp
-    from agora_code.vector_store import get_store
-    from agora_code.session import load_session, _get_git_branch, _get_commit_sha
+    from agora_code.session import _get_uncommitted_files
 
-    # Get the diff
+    if all_files:
+        files = _get_uncommitted_files()
+        if not files:
+            _echo("No uncommitted files to track.")
+            return
+        for fp in files:
+            _track_diff_one(fp, committed)
+        return
+    if not file_path:
+        _echo("Error: Missing argument FILE_PATH (or use --all for all uncommitted files).", err=True)
+        raise SystemExit(2)
+    _track_diff_one(file_path, committed)
+
+
+def _track_diff_one(file_path: str, committed: bool) -> None:
+    """Run track-diff for a single file."""
+    import subprocess as sp
+    from agora_code.vector_store import get_store
+    from agora_code.session import load_session, _get_git_branch, _get_commit_sha, _get_git_author, _get_project_id
+
     if committed:
         cmd = ["git", "diff", "HEAD~1", "--", file_path]
     else:
@@ -761,7 +1054,6 @@ def track_diff(file_path, committed):
         return
 
     if not raw_diff:
-        # No diff — file might be new (untracked) or unchanged
         try:
             r2 = sp.run(["git", "status", "--short", "--", file_path],
                         capture_output=True, text=True, timeout=5)
@@ -769,17 +1061,14 @@ def track_diff(file_path, committed):
             if "??" in status:
                 raw_diff = f"[new untracked file: {file_path}]"
             else:
-                return  # Nothing to track
+                return
         except Exception as e:
             _echo(f"⚠️  git status failed for {file_path}: {e}", err=True)
             return
 
-    # Generate content-aware summary from diff
     summary = _summarize_diff(raw_diff, file_path)
-
     session = load_session()
     store = get_store()
-    from agora_code.session import _get_git_author, _get_project_id
     store.save_file_change(
         file_path=file_path,
         diff_summary=summary,
@@ -1592,6 +1881,9 @@ exit 0
 def summarize(file_path, max_tokens, json_out, threshold):
     """Summarize a file's structure for token-efficient context injection.
 
+    Uses cached AST from DB when the file was already indexed at the same git
+    commit (no re-read from disk). Otherwise reads from disk and summarizes.
+
     \b
     Used by preToolUse hooks to intercept large file reads:
       agora-code summarize agora_code/session.py
@@ -1616,6 +1908,34 @@ def summarize(file_path, max_tokens, json_out, threshold):
         if json_out:
             click.echo(json.dumps({"action": "allow", "reason": "file not found"}))
         return
+
+    # Use cached AST from DB when we have a snapshot at the same git commit (no disk read).
+    try:
+        from agora_code.vector_store import get_store
+        from agora_code.session import _get_project_id, _get_git_branch, _get_commit_sha
+        from agora_code.summarizer import estimate_tokens as _est_tokens
+        store = get_store()
+        pid = _get_project_id()
+        branch = _get_git_branch()
+        current_sha = _get_commit_sha()
+        snapshot = store.get_file_snapshot(str(path), project_id=pid, branch=branch)
+        if snapshot and snapshot.get("summary") and snapshot.get("commit_sha") == current_sha:
+            summary = snapshot["summary"]
+            if json_out:
+                click.echo(json.dumps({
+                    "action": "summarize",
+                    "parser": "cached",
+                    "summary": summary,
+                    "original_lines": 0,
+                    "original_tokens": 0,
+                    "summary_tokens": _est_tokens(summary),
+                }))
+            else:
+                _echo(f"📄 {file_path}: served from DB (cached at {current_sha or 'n/a'})\n")
+                click.echo(summary)
+            return
+    except Exception:
+        pass
 
     try:
         content = path.read_text(encoding="utf-8", errors="ignore")
