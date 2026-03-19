@@ -3,9 +3,15 @@ name: agora-code
 description: Use agora-code memory tools — inject session context, learn findings, recall past work, checkpoint progress, and summarize large files
 ---
 
-agora-code provides persistent memory across Claude Code sessions. Most things happen **automatically via hooks** — you rarely need to call commands manually.
+agora-code gives you persistent memory across sessions. Hooks handle most things automatically, but **you must follow the rules below** — they are not optional.
 
-## What happens automatically
+## Your rules (always follow these)
+
+1. **Before reading any file over ~200 lines** — run `agora-code summarize <file>` first. Do not use the Read tool or an Explore subagent on a large file without summarizing first. This is mandatory, not optional.
+2. **At session start** — run `agora-code inject` to load prior context (checkpoints, learnings, git state, symbol index).
+3. **When done with a task** — run `agora-code complete --summary "..."` to archive the session.
+
+## What the hooks handle automatically (no action needed)
 
 | Hook | Event | Does |
 |---|---|---|
@@ -15,25 +21,25 @@ agora-code provides persistent memory across Claude Code sessions. Most things h
 | `on-edit.sh` | PostToolUse(Write/Edit) | Re-indexes symbols, tracks diff |
 | `on-bash.sh` | PostToolUse(Bash) | Tags committed files with SHA on `git commit` |
 | `on-prompt.sh` | UserPromptSubmit | Auto-sets goal, recalls relevant learnings |
-| `on-stop.sh` | Stop | Parses transcript → structured checkpoint (goal, decisions, next steps, blockers) |
+| `on-stop.sh` | Stop | Parses transcript → structured checkpoint |
 
-PostCompact re-injects context automatically after Claude compacts the conversation.
+PostCompact re-injects context automatically after context compaction.
 
 ## Session lifecycle
 
 ```
-SessionStart  → agora-code inject (auto)           # loads structured context
-Working       → hooks fire silently                 # zero manual commands needed
-Step done     → agora-code checkpoint --goal "..."  # optional manual save
-All done      → agora-code complete --summary "..." # archive to long-term memory
+SessionStart  → agora-code inject                   # load prior context
+Working       → agora-code summarize <file>          # before every large file
+Step done     → agora-code checkpoint --goal "..."   # optional mid-task save
+All done      → agora-code complete --summary "..."  # archive session
 ```
 
-## Manual commands (when needed)
+## Manual commands reference
 
 | Command | When to use |
 |---|---|
-| `agora-code inject` | Manually reload context (auto-fires on SessionStart) |
-| `agora-code summarize <file>` | Before reading any file over ~200 lines |
+| `agora-code inject` | Load prior session context |
+| `agora-code summarize <file>` | **Before reading any file over ~200 lines** |
 | `agora-code learn "<text>"` | Force-save a specific finding right now |
 | `agora-code recall "<query>"` | Search past findings for a topic |
 | `agora-code checkpoint --goal "..."` | Save progress mid-task |
@@ -60,9 +66,3 @@ UNCOMMITTED
 SYMBOL INDEX
   function:line for dirty files (avoids re-reading them)
 ```
-
-## Rules
-
-- **Always** run `agora-code summarize <file>` before reading any file over ~200 lines
-- `agora-code learn` is optional — on-stop.sh auto-extracts findings from transcripts
-- `agora-code recall` is optional — on-prompt.sh auto-recalls on every prompt
