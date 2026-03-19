@@ -57,7 +57,7 @@ def estimate_tokens(text: str) -> int:
 # ── Configuration ─────────────────────────────────────────────────────────────
 
 FILE_SUMMARY_TOKEN_BUDGET = 1000
-FILE_SIZE_THRESHOLD = 500  # lines — files smaller than this pass through
+FILE_SIZE_THRESHOLD = 100  # lines — files smaller than this pass through
 
 
 # ── Extension → tree-sitter language name ────────────────────────────────────
@@ -298,6 +298,7 @@ def summarize_file(
     file_path: str,
     content: str,
     max_tokens: int = FILE_SUMMARY_TOKEN_BUDGET,
+    threshold: int = FILE_SIZE_THRESHOLD,
 ) -> Optional[str]:
     """
     Summarize file content for context injection instead of raw content.
@@ -314,7 +315,7 @@ def summarize_file(
     lines = content.splitlines()
     line_count = len(lines)
 
-    if line_count <= FILE_SIZE_THRESHOLD:
+    if line_count <= threshold:
         return None
 
     ext = _file_ext(file_path)

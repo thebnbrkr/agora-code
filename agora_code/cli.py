@@ -407,38 +407,51 @@ def chat(target, url, use_llm, level, auth_token, auth_type):
 # --------------------------------------------------------------------------- #
 
 @main.command()
-def status():
+@click.option("--project", "-p", is_flag=True, default=False,
+              help="Scope counts to the current repo only")
+def status(project):
     """Show current session state and recent call stats.
 
     \b
-    agora-code status
+    agora-code status           # global counts
+    agora-code status --project # scoped to this repo
+    agora-code status -p
     """
-    from agora_code.session import load_session
+    from agora_code.session import load_session, _get_project_id
     from agora_code.compress import compress_session, _session_age_str
-    from agora_code.summarizer import estimate_tokens
     from agora_code.vector_store import get_store
 
     session = load_session()
     if not session:
-        _echo("📭 No active session. Start one with:")
+        _echo("No active session. Start one with:")
         _echo("   agora-code checkpoint --goal \"What you're trying to do\"")
     else:
         age = _session_age_str(session)
         started = session.get("started_at", "")[:19].replace("T", " ")
         last = session.get("last_active", "")[:19].replace("T", " ")
-        _echo("\n" + "═" * 60)
-        _echo(f"🗂  SESSION: {session.get('session_id', 'unknown')}")
-        _echo(f"   Started:     {started} UTC")
-        _echo(f"   Last active: {last} UTC  ({age})")
-        _echo("═" * 60)
+        _echo(f"session: {session.get('session_id', 'unknown')}")
+        _echo(f"  started:     {started} UTC")
+        _echo(f"  last active: {last} UTC  ({age})")
         _echo(compress_session(session, level="detail"))
 
-    stats = get_store().get_stats()
-    _echo(f"\n🧠 Memory: {stats['sessions']} sessions, "
-          f"{stats['learnings']} learnings, "
-          f"{stats['api_calls']} API calls logged"
-          f"  [DB: {stats['db_path']}]"
-          f"  [vector search: {'on' if stats['vector_search'] else 'off (install sqlite-vec)'}]")
+    store = get_store()
+    conn = store._conn_()
+    if project:
+        pid = _get_project_id()
+        if not pid:
+            _echo("No project_id (not in a git repo).")
+            return
+        sessions   = conn.execute("SELECT COUNT(*) FROM sessions WHERE project_id=?", (pid,)).fetchone()[0]
+        learnings  = conn.execute("SELECT COUNT(*) FROM learnings WHERE project_id=?", (pid,)).fetchone()[0]
+        snapshots  = conn.execute("SELECT COUNT(*) FROM file_snapshots WHERE project_id=?", (pid,)).fetchone()[0]
+        symbols    = conn.execute("SELECT COUNT(*) FROM symbol_notes WHERE project_id=?", (pid,)).fetchone()[0]
+        _echo(f"\nproject: {pid}")
+        _echo(f"  {sessions} sessions  {learnings} learnings  {snapshots} file snapshots  {symbols} symbols")
+    else:
+        stats = store.get_stats()
+        _echo(f"\nmemory (global): {stats['sessions']} sessions  {stats['learnings']} learnings  "
+              f"{stats['api_calls']} API calls  [DB: {stats['db_path']}]"
+              f"  [vector: {'on' if stats['vector_search'] else 'off'}]")
 
 
 # --------------------------------------------------------------------------- #
@@ -1874,14 +1887,19 @@ exit 0
         p.write_text(content, encoding="utf-8")
         p.chmod(p.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
 
-    # Install SKILL.md so Claude Code surfaces agora-code as a skill in this project
+    # Install SKILL.md — project-level and user-global
     skill_md_content = _get_skill_md_content()
+    skill_path = None
     if skill_md_content:
-        skill_dir = claude_dir / "skills" / "agora-code"
-        skill_dir.mkdir(parents=True, exist_ok=True)
-        skill_path = skill_dir / "SKILL.md"
+        # Project-level: .claude/skills/agora-code/SKILL.md
+        project_skill_dir = claude_dir / "skills" / "agora-code"
+        project_skill_dir.mkdir(parents=True, exist_ok=True)
+        (project_skill_dir / "SKILL.md").write_text(skill_md_content, encoding="utf-8")
+        # Global: ~/.claude/skills/agora-code/SKILL.md
+        global_skill_dir = Path.home() / ".claude" / "skills" / "agora-code"
+        global_skill_dir.mkdir(parents=True, exist_ok=True)
+        skill_path = global_skill_dir / "SKILL.md"
         skill_path.write_text(skill_md_content, encoding="utf-8")
-        _echo(f"   {skill_path}")
 
     # Register agora-memory MCP server via .mcp.json (Claude Code's MCP config file)
     import json as _json
@@ -1897,15 +1915,17 @@ exit 0
         "args": ["memory-server"],
     }
     mcp_path.write_text(_json.dumps(mcp_config, indent=2), encoding="utf-8")
-    _echo(f"   {mcp_path}  (MCP server: agora-memory)")
 
-    _echo("✅ Claude Code hooks installed:")
+    _echo("Installed:")
     _echo(f"   {hooks_json_path}")
     for name in scripts:
         _echo(f"   {hooks_dir / name}")
+    if skill_md_content:
+        _echo(f"   .claude/skills/agora-code/SKILL.md")
+        _echo(f"   {skill_path}")
+    _echo(f"   {mcp_path}")
     _echo("")
-    _echo("   Restart Claude Code in this directory to activate.")
-    _echo(f"   agora-code binary: {agora_bin}")
+    _echo("Restart Claude Code in this directory to activate.")
 
 
 # --------------------------------------------------------------------------- #
@@ -1917,7 +1937,7 @@ exit 0
 @click.option("--max-tokens", default=500, help="Token budget for summary")
 @click.option("--json-output", "json_out", is_flag=True, default=False,
               help="Output JSON for hook consumption")
-@click.option("--threshold", default=200, help="Line threshold — files below this pass through")
+@click.option("--threshold", default=100, help="Line threshold — files below this pass through")
 def summarize(file_path, max_tokens, json_out, threshold):
     """Summarize a file's structure for token-efficient context injection.
 
@@ -1984,7 +2004,7 @@ def summarize(file_path, max_tokens, json_out, threshold):
             click.echo(json.dumps({"action": "allow", "reason": "unreadable"}))
         return
 
-    summary = summarize_file(str(file_path), content, max_tokens=max_tokens)
+    summary = summarize_file(str(file_path), content, max_tokens=max_tokens, threshold=threshold)
 
     if summary is None:
         if json_out:
