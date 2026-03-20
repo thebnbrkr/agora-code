@@ -376,7 +376,7 @@ class MCPServer:
                 "capabilities": {"tools": {"listChanged": False}},
                 "serverInfo": {
                     "name": "agora-code",
-                    "version": "0.2.0",
+                    "version": "0.2.1",
                     "edition": self.edition,
                 },
             })

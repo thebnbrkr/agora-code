@@ -12,7 +12,7 @@
       "name": "agora-code",
       "source": "./",
       "description": "Claude Code plugin: persistent memory + tree-sitter AST summarization. Intercepts large file reads and replaces them with structural outlines (functions, classes, line numbers) for 75%+ token reduction. Auto-injects session context on start, recalls learnings on every prompt, and digests conversations into searchable memory across sessions.",
-      "version": "0.2.0",
+      "version": "0.2.1",
       "author": {
         "name": "thebnbrkr"
       },

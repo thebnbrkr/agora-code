@@ -695,7 +695,7 @@ async def _dispatch(req: dict) -> Optional[dict]:
             "jsonrpc": "2.0", "id": req_id,
             "result": {
                 "protocolVersion": "2024-11-05",
-                "serverInfo": {"name": "agora-memory", "version": "0.2.0"},
+                "serverInfo": {"name": "agora-memory", "version": "0.2.1"},
                 "capabilities": {"tools": {}},
             }
         }
