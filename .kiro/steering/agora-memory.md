@@ -15,10 +15,15 @@ You have access to the `agora-memory` MCP server, which gives you persistent mem
 | Discovered something non-obvious | `store_learning` |
 | Starting a task — check if already solved | `recall_learnings` |
 | Session is fully done | `complete_session` |
+| About to read a large file | `summarize_file` first, then read only the section you need |
+| Need a specific line range from a file | `read_file_range` |
+| Just read/edited a file, want symbols searchable | `index_file` |
 
 ## Rules
 
 1. **Always call `get_session_context` at the start** of every new conversation before doing anything else. This loads what was being worked on last session.
+
+1a. **Before reading any file**, call `summarize_file` first to get an AST outline with function names and line numbers. Then use `read_file_range` to read only the section you need. This saves 90%+ tokens on large files.
 
 2. **Call `save_checkpoint`** after any meaningful step completes (task done, bug fixed, decision made). Include `goal`, `action`, and `files_changed`.
 

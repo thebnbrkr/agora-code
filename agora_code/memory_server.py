@@ -266,6 +266,77 @@ _TOOLS = [
             },
             "required": ["query"]
         }
+    },
+    {
+        "name": "summarize_file",
+        "description": (
+            "Get a token-efficient AST outline of any file — lists all functions and classes "
+            "with line numbers, signatures, and one-liner descriptions. Uses 90%+ fewer tokens "
+            "than reading the full file. "
+            "USE THIS BEFORE reading any large file: call summarize_file first to get the outline, "
+            "then read only the specific function/section you need using the line numbers returned."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "file_path": {
+                    "type": "string",
+                    "description": "Absolute or repo-relative path to the file"
+                },
+                "max_tokens": {
+                    "type": "integer",
+                    "default": 2000,
+                    "description": "Token budget for the summary (default 2000)"
+                }
+            },
+            "required": ["file_path"]
+        }
+    },
+    {
+        "name": "read_file_range",
+        "description": (
+            "Read a specific line range from a file. Use this after summarize_file to read "
+            "only the function or section you need, instead of the whole file. "
+            "USE THIS WHEN: you know the line numbers (from summarize_file or search_symbols) "
+            "and want to read just that section."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "file_path": {
+                    "type": "string",
+                    "description": "Absolute or repo-relative path to the file"
+                },
+                "start_line": {
+                    "type": "integer",
+                    "description": "First line to read (1-indexed)"
+                },
+                "end_line": {
+                    "type": "integer",
+                    "description": "Last line to read (inclusive). Omit to read to end of file."
+                }
+            },
+            "required": ["file_path", "start_line"]
+        }
+    },
+    {
+        "name": "index_file",
+        "description": (
+            "Index a file's functions and classes into the memory DB so they appear in "
+            "get_file_symbols and search_symbols. "
+            "USE THIS WHEN: you've just read or edited a file and want its symbols searchable, "
+            "or when get_file_symbols returns empty for a file you know exists."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "file_path": {
+                    "type": "string",
+                    "description": "Absolute or repo-relative path to the file to index"
+                }
+            },
+            "required": ["file_path"]
+        }
     }
 ]
 
@@ -655,6 +726,100 @@ async def _handle_search_symbols(params: dict) -> str:
     return "\n".join(lines)
 
 
+async def _handle_summarize_file(params: dict) -> str:
+    from agora_code.summarizer import summarize_file, FILE_SUMMARY_TOKEN_BUDGET
+    from agora_code.vector_store import get_store
+    from agora_code.session import _get_project_id, _get_git_branch
+
+    file_path = params.get("file_path", "").strip()
+    if not file_path:
+        return "Error: file_path is required."
+
+    max_tokens = int(params.get("max_tokens", FILE_SUMMARY_TOKEN_BUDGET))
+
+    # Check DB cache first (same commit = same summary)
+    try:
+        import subprocess
+        sha = subprocess.check_output(
+            ["git", "rev-parse", "HEAD"], stderr=subprocess.DEVNULL
+        ).decode().strip()
+        store = get_store()
+        pid = _get_project_id()
+        branch = _get_git_branch()
+        snap = store.get_file_snapshot(file_path, project_id=pid, branch=branch)
+        if snap and snap.get("commit_sha") == sha and snap.get("summary"):
+            return f"[cached AST — {file_path}]\n{snap['summary']}"
+    except Exception:
+        pass
+
+    # Read and summarize from disk
+    from pathlib import Path
+    p = Path(file_path)
+    if not p.is_absolute():
+        p = Path.cwd() / p
+    if not p.exists():
+        return f"Error: file not found: {file_path}"
+
+    content = p.read_text(errors="replace")
+    summary = summarize_file(str(p), content, max_tokens=max_tokens, threshold=0)
+    if summary is None:
+        # File was under threshold — return content directly
+        return content
+    return summary
+
+
+async def _handle_read_file_range(params: dict) -> str:
+    from pathlib import Path
+
+    file_path = params.get("file_path", "").strip()
+    if not file_path:
+        return "Error: file_path is required."
+
+    start = int(params.get("start_line", 1))
+    end = params.get("end_line")
+
+    p = Path(file_path)
+    if not p.is_absolute():
+        p = Path.cwd() / p
+    if not p.exists():
+        return f"Error: file not found: {file_path}"
+
+    lines = p.read_text(errors="replace").splitlines()
+    total = len(lines)
+
+    start_idx = max(0, start - 1)
+    end_idx = int(end) if end is not None else total
+    end_idx = min(end_idx, total)
+
+    selected = lines[start_idx:end_idx]
+    header = f"[{file_path}  lines {start}–{end_idx} of {total}]\n"
+    return header + "\n".join(
+        f"{start_idx + i + 1}| {line}" for i, line in enumerate(selected)
+    )
+
+
+async def _handle_index_file(params: dict) -> str:
+    from pathlib import Path
+
+    file_path = params.get("file_path", "").strip()
+    if not file_path:
+        return "Error: file_path is required."
+
+    p = Path(file_path)
+    if not p.is_absolute():
+        p = Path.cwd() / p
+    if not p.exists():
+        return f"Error: file not found: {file_path}"
+
+    try:
+        from agora_code.indexer import index_file
+        result = index_file(str(p))
+        symbols = result.get("symbols", 0) if isinstance(result, dict) else 0
+        return f"Indexed {file_path}: {symbols} symbols stored."
+    except Exception as e:
+        return f"Error indexing {file_path}: {e}"
+
+
 _HANDLERS = {
     "get_session_context":   _handle_get_session_context,
     "save_checkpoint":       _handle_save_checkpoint,
@@ -668,6 +833,9 @@ _HANDLERS = {
     "recall_file_history":   _handle_recall_file_history,
     "get_file_symbols":      _handle_get_file_symbols,
     "search_symbols":        _handle_search_symbols,
+    "summarize_file":        _handle_summarize_file,
+    "read_file_range":       _handle_read_file_range,
+    "index_file":            _handle_index_file,
 }
 
 

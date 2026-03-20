@@ -13,7 +13,10 @@
         "list_sessions",
         "recall_file_history",
         "get_file_symbols",
-        "search_symbols"
+        "search_symbols",
+        "summarize_file",
+        "read_file_range",
+        "index_file"
       ]
     }
   }
