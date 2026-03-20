@@ -6,18 +6,14 @@ Persistent memory layer for AI coding agents. Survives context window resets, ne
 
 ## Quick start
 
-```bash
-pip install git+https://github.com/thebnbrkr/agora-code.git
+### Claude Code Plugin (recommended)
+
+```
+/plugin marketplace add thebnbrkr/agora-code
+/plugin install agora-code@thebnbrkr/agora-code
 ```
 
-**Claude Code** — run this once inside any project, then restart Claude Code:
-
-```bash
-cd your-project
-agora-code install-hooks --claude-code
-```
-
-That's it. From now on every Claude Code session in that project automatically:
+Restart Claude Code. That's it — no pip install, no hook setup. Every session automatically:
 - Loads your last session state on start
 - Searches past learnings on every prompt and injects relevant ones as context
 - Indexes symbols and diffs on every file read/edit
@@ -28,6 +24,19 @@ That's it. From now on every Claude Code session in that project automatically:
 ```bash
 agora-code status        # current session + DB stats
 agora-code status -p     # scoped to this repo only
+```
+
+### Manual install (pip)
+
+```bash
+pip install git+https://github.com/thebnbrkr/agora-code
+```
+
+Then run once inside any project and restart Claude Code:
+
+```bash
+cd your-project
+agora-code install-hooks --claude-code
 ```
 
 ---
