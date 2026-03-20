@@ -7,7 +7,7 @@ Persistent memory layer for AI coding agents. Survives context window resets, ne
 ## Quick start
 
 ```bash
-pip install git+https://github.com/thebnbrkr/agora-code
+pip install git+https://github.com/thebnbrkr/agora-code.git
 ```
 
 **Claude Code** — run this once inside any project, then restart Claude Code:
