@@ -18,8 +18,15 @@ from __future__ import annotations
 
 import json
 import os
-import sqlite3
 import struct
+
+# pysqlite3 ships with enable_load_extension unlocked, which is required
+# for sqlite-vec on macOS where the system Python disables it.
+# Fall back to stdlib sqlite3 on platforms where it works fine (Linux, Windows).
+try:
+    import pysqlite3 as sqlite3  # type: ignore
+except ImportError:
+    import sqlite3  # type: ignore
 import threading
 import uuid
 from datetime import datetime, timezone
@@ -404,7 +411,7 @@ class VectorStore:
             )
         """)
         conn.commit()
-        self._vec_dim = dim
+
 
     @staticmethod
     def _pack(vec: list[float]) -> bytes:
