@@ -1221,7 +1221,7 @@ class VectorStore:
         """FTS5/BM25 keyword search over learnings. Always works."""
         SELECT_COLS = """id, finding, evidence, confidence, tags,
                          endpoint_method, endpoint_path, timestamp,
-                         branch, files, namespace, type"""
+                         branch, files, namespace, type, commit_sha"""
 
         # Build dynamic WHERE filters
         filters = ["(namespace = ? OR namespace IS NULL)"]
@@ -1261,7 +1261,7 @@ class VectorStore:
             rows = self._conn_().execute(f"""
                 SELECT l.id, l.finding, l.evidence, l.confidence, l.tags,
                        l.endpoint_method, l.endpoint_path, l.timestamp,
-                       l.branch, l.files, l.namespace, l.type,
+                       l.branch, l.files, l.namespace, l.type, l.commit_sha,
                        bm25(learnings_fts) as score
                 FROM learnings_fts f
                 JOIN learnings l ON l.id = f.id
@@ -1277,7 +1277,7 @@ class VectorStore:
             rows = self._conn_().execute(f"""
                 SELECT id, finding, evidence, confidence, tags,
                        endpoint_method, endpoint_path, timestamp,
-                       branch, files, namespace, type
+                       branch, files, namespace, type, commit_sha
                 FROM learnings
                 WHERE (finding LIKE ? OR evidence LIKE ?)
                   AND {where}

@@ -260,13 +260,20 @@ finding = (
 )
 evidence = json.dumps(checkpoint, ensure_ascii=False)[:1000]
 
-subprocess.run(
+_log = os.path.expanduser("~/.agora-code/hooks.log")
+result = subprocess.run(
     [agora_bin, "learn", finding,
      "--evidence", evidence,
      "--confidence", "confirmed",
      "--tags", "checkpoint,structured"],
     capture_output=True, timeout=10,
 )
+if result.returncode != 0:
+    try:
+        with open(_log, "a") as _f:
+            _f.write(f"[on-stop] learn failed (rc={result.returncode}): {result.stderr.decode()[:200]}\n")
+    except Exception:
+        pass
 
 # Also update session.json
 try:
