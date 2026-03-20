@@ -15,6 +15,12 @@ Everything is automatic via Claude Code hooks. When you read a file, symbols and
   1. Run `agora-code summarize <file>` first
   2. Then use `offset+limit` to read ONLY the sections you need
   Skipping this wastes the entire point of the tool.
+- **After every file edit**, run:
+  ```
+  agora-code track-diff <file> --note "one sentence: what changed and why"
+  ```
+  Write what function/class changed, what it calls/depends on and where, and the outcome. Tag `#not_kept` if you reverted — kept changes are auto-tagged `#kept` on commit.
+  Example: `"tried caching in validate_user() via redisupload() in redis_db.py to reduce DB hits — didn't work #not_kept"`
 
 ## Tool reference
 

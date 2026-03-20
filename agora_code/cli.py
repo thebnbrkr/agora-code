@@ -1061,13 +1061,16 @@ def index(file_path):
               help="Track all uncommitted (staged + unstaged) files")
 @click.option("--committed", is_flag=True, default=False,
               help="Diff against HEAD~1 (last commit) rather than working tree")
-def track_diff(file_path, all_files, committed):
+@click.option("--note", default=None,
+              help="One sentence describing what changed and why — written by the agent")
+def track_diff(file_path, all_files, committed, note):
     """Capture a git diff for a file and store a compact summary in memory.
 
-    \b
-    Called automatically by hooks after file edit. Run manually:
+    Pass --note with a sentence you write describing what changed and why.
+    This is more accurate than auto-generated notes.
 
-    agora-code track-diff agora_code/auth.py
+    \b
+    agora-code track-diff agora_code/auth.py --note "changed _check_expiry to use utcnow — fixes tz offset, called by authenticate()"
     agora-code track-diff --all
     agora-code track-diff agora_code/auth.py --committed
     """
@@ -1080,15 +1083,15 @@ def track_diff(file_path, all_files, committed):
             _echo("No uncommitted files to track.")
             return
         for fp in files:
-            _track_diff_one(fp, committed)
+            _track_diff_one(fp, committed, note=note)
         return
     if not file_path:
         _echo("Error: Missing argument FILE_PATH (or use --all for all uncommitted files).", err=True)
         raise SystemExit(2)
-    _track_diff_one(file_path, committed)
+    _track_diff_one(file_path, committed, note=note)
 
 
-def _track_diff_one(file_path: str, committed: bool) -> None:
+def _track_diff_one(file_path: str, committed: bool, note: Optional[str] = None) -> None:
     """Run track-diff for a single file."""
     import subprocess as sp
     from agora_code.vector_store import get_store
@@ -1119,7 +1122,7 @@ def _track_diff_one(file_path: str, committed: bool) -> None:
             _echo(f"⚠️  git status failed for {file_path}: {e}", err=True)
             return
 
-    summary = _summarize_diff(raw_diff, file_path)
+    summary = note if note else _summarize_diff(raw_diff, file_path)
     session = load_session()
     store = get_store()
     store.save_file_change(
@@ -1373,45 +1376,36 @@ def learn_from_commit(sha, quiet):
     session = load_session()
     session_id = session.get("session_id") if session else None
 
-    # Get change notes for these files from file_changes (already tracked by on-edit)
-    file_notes = []
-    for fp in files:
-        history = store.get_file_history(fp, limit=3)
-        # Find the entry most likely from this commit
-        note = next(
-            (h for h in history if h.get("commit_sha") == sha),
-            history[0] if history else None,
-        )
-        if note:
-            file_notes.append({"file_path": fp, "diff_summary": note.get("diff_summary", "")})
-        else:
-            file_notes.append({"file_path": fp, "diff_summary": f"modified {fp}"})
-
-    # Build learnings directly from change notes — no external LLM.
-    # Each file's change note IS the learning. Commit message is the context/header.
-    # One learning per file that has a real change note; one summary learning if none exist.
+    # Get ALL change notes for each committed file — every attempt, not just the last one.
+    import re as _re
     stored = 0
-    for fn in file_notes:
-        note = fn.get("diff_summary", "").strip()
-        # Strip any leading "filepath: " prefix stored by _summarize_diff
-        import re as _re
-        clean = _re.sub(r'^[^\s:]+[/\\][^\s:]*:\s*', '', note)
-        if not clean or clean.startswith("modified ") and len(clean) < 20:
-            continue  # skip uninformative notes
-        finding = f"{clean}  [{fn['file_path'].split('/')[-1]}]"
-        store.store_learning(
-            finding=finding,
-            evidence=f"commit {sha}: {commit_message[:80]}",
-            confidence="confirmed",
-            tags=["commit", "change-note"],
-            type="finding",
-            branch=branch,
-            files=[fn["file_path"]],
-            project_id=project_id,
-            session_id=session_id,
-            commit_sha=sha,
-        )
-        stored += 1
+    for fp in files:
+        rows = store.get_file_changes_for_commit(fp, sha, project_id=project_id)
+        if not rows:
+            # fallback: most recent note for this file regardless of SHA
+            history = store.get_file_history(fp, limit=1)
+            rows = history if history else []
+
+        for row in rows:
+            note = (row.get("diff_summary") or "").strip()
+            # Strip any leading "filepath: " prefix stored by _summarize_diff
+            clean = _re.sub(r'^[^\s:]+[/\\][^\s:]*:\s*', '', note)
+            if not clean or (clean.startswith("modified ") and len(clean) < 20):
+                continue
+            finding = f"{clean}  [{fp.split('/')[-1]}]"
+            store.store_learning(
+                finding=finding,
+                evidence=f"commit {sha}: {commit_message[:80]}",
+                confidence="confirmed",
+                tags=["commit", "change-note"],
+                type="finding",
+                branch=branch,
+                files=[fp],
+                project_id=project_id,
+                session_id=session_id,
+                commit_sha=sha,
+            )
+            stored += 1
 
     # If no file notes had content, store the commit message as a minimal signal
     if stored == 0:

@@ -956,7 +956,12 @@ class VectorStore:
             like_pat = f"%{fp}"
             r = conn.execute("""
                 UPDATE file_changes
-                SET commit_sha=?, status='committed', committed_at=?
+                SET commit_sha=?, status='committed', committed_at=?,
+                    diff_summary = CASE
+                        WHEN diff_summary NOT LIKE '%#kept%' AND diff_summary NOT LIKE '%#not_kept%'
+                        THEN diff_summary || ' #kept'
+                        ELSE diff_summary
+                    END
                 WHERE file_path LIKE ? AND status='uncommitted'
                   AND (project_id=? OR project_id IS NULL)
             """, (commit_sha, now, like_pat, project_id))
@@ -1109,6 +1114,23 @@ class VectorStore:
             (now, *learning_ids),
         )
         self._conn_().commit()
+
+    def get_file_changes_for_commit(
+        self,
+        file_path: str,
+        commit_sha: str,
+        project_id: Optional[str] = None,
+    ) -> List[Dict]:
+        """Return all file_changes rows for a file tagged with a specific commit SHA."""
+        like_pat = f"%{file_path}"
+        rows = self._conn_().execute("""
+            SELECT id, file_path, diff_summary, commit_sha, timestamp
+            FROM file_changes
+            WHERE file_path LIKE ? AND commit_sha = ?
+              AND (project_id = ? OR project_id IS NULL)
+            ORDER BY timestamp ASC
+        """, (like_pat, commit_sha, project_id)).fetchall()
+        return [dict(r) for r in rows]
 
     def get_uncommitted_file_changes(
         self,
