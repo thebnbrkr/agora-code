@@ -1123,12 +1123,15 @@ def _track_diff_one(file_path: str, committed: bool, note: Optional[str] = None)
             return
 
     summary = note if note else _summarize_diff(raw_diff, file_path)
+    changed_lines = [l for l in raw_diff.splitlines()
+                     if l.startswith(('+', '-')) and not l.startswith(('+++', '---'))]
+    snippet = '\n'.join(changed_lines)
     session = load_session()
     store = get_store()
     store.save_file_change(
         file_path=file_path,
         diff_summary=summary,
-        diff_snippet=raw_diff[:2000],
+        diff_snippet=snippet,
         commit_sha=_get_commit_sha(),
         session_id=session.get("session_id") if session else None,
         branch=_get_git_branch(),
