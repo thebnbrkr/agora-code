@@ -259,11 +259,18 @@ _TS_QUERIES: dict[str, str] = {
         (call
             target: (identifier) @_def
             arguments: (arguments (alias) @class.name)
-            (#match? @_def "^(defmodule)$")) @class
+            (#match? @_def "^(defmodule|defprotocol|defimpl)$")) @class
+        (call
+            target: (identifier) @_def
+            arguments: (arguments
+                (call
+                    target: (identifier) @func.name
+                    arguments: (arguments) @func.params))
+            (#match? @_def "^(def|defp|defmacro|defmacrop|defguard|defguardp)$")) @func
         (call
             target: (identifier) @_def
             arguments: (arguments (identifier) @func.name)
-            (#match? @_def "^(def|defp|defmacro)$")) @func
+            (#match? @_def "^(def|defp|defmacro|defmacrop|defguard|defguardp)$")) @func
     """,
     "zig": """
         (ContainerDecl) @class
