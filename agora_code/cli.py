@@ -1498,8 +1498,17 @@ def show(json_out):
     branch_shas = [c["sha"] for c in recent_commits[:3]]
     commit_learnings = store.get_learnings_for_commits(branch_shas, project_id=project_id)
 
-    # ── Uncommitted file changes ──────────────────────────────────────────────
-    dirty_files = _get_uncommitted_files()
+    # ── Uncommitted file changes — always read live from git ─────────────────
+    try:
+        import subprocess as _sp
+        _u = _sp.run(["git", "diff", "--name-only", "HEAD"], capture_output=True, text=True, timeout=5)
+        _s = _sp.run(["git", "diff", "--cached", "--name-only"], capture_output=True, text=True, timeout=5)
+        dirty_files = list(dict.fromkeys(
+            [f for f in _u.stdout.strip().splitlines() if f] +
+            [f for f in _s.stdout.strip().splitlines() if f]
+        ))
+    except Exception:
+        dirty_files = []
     uncommitted_changes = store.get_uncommitted_file_changes(
         project_id=project_id, branch=branch
     ) if dirty_files else []
