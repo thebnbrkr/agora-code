@@ -16,6 +16,11 @@ You have access to the `agora-memory` MCP server, which gives you persistent mem
 | Starting a task — check if already solved | `recall_learnings` |
 | Session is fully done | `complete_session` |
 
+## File reading rules
+
+- **Before reading any file over ~100 lines**, call `get_file_symbols` first to get an AST outline of functions/classes with line numbers. Then use `offset`+`limit` to read only the sections you need instead of the whole file.
+- **To find a symbol across the codebase**, use `search_symbols` instead of reading files.
+
 ## Rules
 
 1. **Always call `get_session_context` at the start** of every new conversation before doing anything else. This loads what was being worked on last session.
