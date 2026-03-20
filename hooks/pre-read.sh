@@ -25,9 +25,10 @@ if [ -z "$FILE_PATH" ]; then
     exit 0
 fi
 
-RESULT=$(agora-code summarize "$FILE_PATH" --json-output 2>/dev/null)
+RESULT=$(agora-code summarize "$FILE_PATH" --json-output 2>/tmp/agora-pre-read-error.log)
 
 if [ -z "$RESULT" ]; then
+    # Log silent failures so they're diagnosable (was 2>/dev/null before)
     exit 0
 fi
 
@@ -38,7 +39,7 @@ try:
     print(d.get('action', 'allow'))
 except Exception:
     print('allow')
-" 2>/dev/null)
+" 2>>/tmp/agora-pre-read-error.log)
 
 if [ "$ACTION" = "summarize" ]; then
     printf '%s' "$RESULT" | python3 -c "
@@ -50,7 +51,7 @@ toks = d.get('summary_tokens', 0)
 print(s)
 print()
 print(f'[Read blocked: file has {orig} lines. Use the summary above — do NOT read this file in chunks.]')
-" 2>/dev/null
+" 2>>/tmp/agora-pre-read-error.log
     exit 2
 else
     exit 0
