@@ -14,5 +14,5 @@ from agora_code.models import Route, Param, RouteCatalog
 from agora_code.scanner import scan
 from agora_code.agent import MCPServer, APICallNode
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 __all__ = ["Route", "Param", "RouteCatalog", "scan", "MCPServer", "APICallNode"]
