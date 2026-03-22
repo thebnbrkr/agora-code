@@ -2,7 +2,7 @@
   "version": "1.0.0",
   "enabled": true,
   "name": "agora: summarize interaction",
-  "description": "Store a one-sentence summary of what was just done (runs before agora-z-checkpoint)",
+  "description": "Store a one-sentence summary of what was just done. Runs before agora-z-checkpoint.",
   "when": {
     "type": "agentStop"
   },

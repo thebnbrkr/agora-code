@@ -1,0 +1,13 @@
+{
+  "version": "1.0.0",
+  "enabled": true,
+  "name": "agora: index on file save",
+  "description": "Index file symbols whenever a file is saved",
+  "when": {
+    "type": "fileSaved"
+  },
+  "then": {
+    "type": "askAgent",
+    "prompt": "Call index_file from agora-memory for the file that was just saved so its updated symbols are searchable in future sessions."
+  }
+}

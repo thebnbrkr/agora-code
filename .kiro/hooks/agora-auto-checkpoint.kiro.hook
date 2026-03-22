@@ -1,8 +1,8 @@
 {
   "version": "1.0.0",
   "enabled": true,
-  "name": "agora: auto checkpoint",
-  "description": "Save session checkpoint after every agent turn (runs after agora-summarize-interaction)",
+  "name": "agora: checkpoint",
+  "description": "Save checkpoint after every agent stop. Runs after agora-a-summarize-interaction so the summary is already stored.",
   "when": {
     "type": "agentStop"
   },
