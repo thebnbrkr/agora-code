@@ -824,6 +824,136 @@ def inject(level, token_budget, raw, quiet):
 
 
 # --------------------------------------------------------------------------- #
+#  kiro-sync                                                                   #
+# --------------------------------------------------------------------------- #
+
+@main.command("kiro-sync")
+@click.option("--quiet", is_flag=True, default=False)
+@click.option("--workspace", default=None, help="Workspace path (defaults to cwd)")
+def kiro_sync(quiet, workspace):
+    """Parse the latest Kiro session for this workspace and store it in memory.
+
+    \b
+    Extracts user questions and session title from Kiro's local session storage,
+    stores them as a learning, and saves a checkpoint with the session goal.
+    Run this from the Agent Stop hook to capture what was explored each session.
+
+    \b
+    agora-code kiro-sync
+    agora-code kiro-sync --workspace /path/to/project
+    """
+    import base64
+    import glob
+    import json as _json
+    import re
+
+    from agora_code.vector_store import get_store
+
+    ws_path = workspace or os.getcwd()
+
+    # Kiro base64-encodes the workspace path as the session folder name
+    encoded = base64.b64encode(ws_path.encode()).decode().rstrip("=")
+    # Kiro uses URL-safe base64 with no padding
+    sessions_root = os.path.expanduser(
+        "~/Library/Application Support/Kiro/User/globalStorage/kiro.kiroagent/workspace-sessions"
+    )
+    session_dir = os.path.join(sessions_root, encoded)
+
+    if not os.path.isdir(session_dir):
+        # Try with padding variants
+        for pad in ["", "=", "=="]:
+            candidate = os.path.join(sessions_root, encoded + pad)
+            if os.path.isdir(candidate):
+                session_dir = candidate
+                break
+        else:
+            if not quiet:
+                click.echo(f"No Kiro sessions found for {ws_path}", err=True)
+            return
+
+    # Find the most recently modified session JSON (not sessions.json index)
+    session_files = [
+        f for f in glob.glob(os.path.join(session_dir, "*.json"))
+        if not f.endswith("sessions.json")
+    ]
+    if not session_files:
+        if not quiet:
+            click.echo("No Kiro session files found.", err=True)
+        return
+
+    latest = max(session_files, key=os.path.getmtime)
+
+    try:
+        with open(latest) as f:
+            data = _json.load(f)
+    except Exception as e:
+        if not quiet:
+            click.echo(f"Failed to read session: {e}", err=True)
+        return
+
+    title = data.get("title", "")
+    history = data.get("history", [])
+
+    # Extract user questions
+    questions = []
+    for entry in history:
+        msg = entry.get("message", {})
+        if msg.get("role") == "user":
+            content = msg.get("content", "")
+            if isinstance(content, list):
+                for c in content:
+                    if isinstance(c, dict) and c.get("type") == "text":
+                        text = c.get("text", "").strip()
+                        if text and len(text) > 5:
+                            questions.append(text)
+            elif isinstance(content, str) and len(content.strip()) > 5:
+                questions.append(content.strip())
+
+    if not questions:
+        if not quiet:
+            click.echo("No user messages found in session.", err=True)
+        return
+
+    last_question = questions[-1]
+    all_questions = " | ".join(questions)
+
+    filler = re.compile(
+        r'^(hi|hey|hello|ok|okay|yes|no|sure|thanks|bye|lol|cool|great|nice|yep|nope|got it)\b',
+        re.I
+    )
+
+    def is_substantive(t):
+        return len(t) > 20 and not filler.match(t)
+
+    substantive = [q for q in questions if is_substantive(q)]
+    if not substantive:
+        if not quiet:
+            click.echo("No substantive questions found.", err=True)
+        return
+
+    vs = get_store()
+
+    # Store as a learning so inject picks it up
+    summary = f"Kiro session '{title}': explored — {' | '.join(substantive[-5:])}"
+    vs.store_learning(
+        finding=summary,
+        confidence="confirmed",
+        tags=["kiro-session", "conversation-summary"],
+    )
+
+    # Save a checkpoint with the last question as the goal
+    from agora_code.session import load_session, save_session
+    session = load_session() or {}
+    session["goal"] = last_question[:200]
+    session["action"] = f"Kiro session: {title}"
+    session["status"] = "complete"
+    save_session(session)
+
+    if not quiet:
+        click.echo(f"kiro-sync: stored {len(substantive)} questions from '{title}'")
+
+
+# --------------------------------------------------------------------------- #
 #  restore                                                                     #
 # --------------------------------------------------------------------------- #
 

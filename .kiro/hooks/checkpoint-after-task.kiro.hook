@@ -8,7 +8,7 @@
   },
   "then": {
     "type": "runCommand",
-    "command": "/Library/Frameworks/Python.framework/Versions/3.10/bin/agora-code checkpoint --quiet 2>/dev/null || true",
+    "command": "agora-code checkpoint --quiet 2>/dev/null || true",
     "timeout": 10
   }
 }

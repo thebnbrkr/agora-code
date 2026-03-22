@@ -1,7 +1,7 @@
 {
   "mcpServers": {
     "agora-memory": {
-      "command": "/Library/Frameworks/Python.framework/Versions/3.10/bin/agora-code",
+      "command": "agora-code",
       "args": ["memory-server"],
       "autoApprove": [
         "get_session_context",
