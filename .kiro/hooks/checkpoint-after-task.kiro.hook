@@ -1,0 +1,14 @@
+{
+  "version": "1.0.0",
+  "enabled": true,
+  "name": "checkpoint after task",
+  "description": "Save progress after each spec task completes",
+  "when": {
+    "type": "postTaskExecution"
+  },
+  "then": {
+    "type": "runCommand",
+    "command": "agora-code checkpoint --quiet 2>/dev/null || true",
+    "timeout": 10
+  }
+}

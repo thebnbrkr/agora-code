@@ -1,0 +1,14 @@
+{
+  "version": "1.0.0",
+  "enabled": true,
+  "name": "agora: session inject",
+  "description": "Inject last session context before every prompt",
+  "when": {
+    "type": "promptSubmit"
+  },
+  "then": {
+    "type": "runCommand",
+    "command": "agora-code inject --quiet 2>/dev/null || true",
+    "timeout": 10
+  }
+}

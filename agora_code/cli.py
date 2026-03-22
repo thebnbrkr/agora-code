@@ -1741,7 +1741,9 @@ def commit_log(sha, limit):
 @click.option("--force", is_flag=True, default=False, help="Overwrite existing hook")
 @click.option("--claude-code", "claude_code", is_flag=True, default=False,
               help="Install Claude Code hooks (.claude/hooks.json + shell scripts)")
-def install_hooks(force, claude_code):
+@click.option("--cline", "cline", is_flag=True, default=False,
+              help="Install Cline hooks globally (~/Documents/Cline/Hooks/)")
+def install_hooks(force, claude_code, cline):
     """Install hooks to auto-track file changes.
 
     \b
@@ -1752,9 +1754,15 @@ def install_hooks(force, claude_code):
     Claude Code hooks:
       agora-code install-hooks --claude-code
       agora-code install-hooks --claude-code --force
+
+    Cline hooks (global, any project):
+      agora-code install-hooks --cline
     """
     if claude_code:
         _install_claude_code_hooks(force)
+        return
+    if cline:
+        _install_cline_hooks(force)
         return
 
     import stat
@@ -1807,6 +1815,187 @@ def _get_skill_md_content() -> str | None:
         if p.exists():
             return p.read_text(encoding="utf-8")
     return None
+
+
+def _install_cline_hooks(force: bool) -> None:
+    """Install agora-code hooks to ~/Documents/Cline/Hooks/ for global Cline use."""
+    import stat
+
+    hooks_dir = Path.home() / "Documents" / "Cline" / "Hooks"
+    hooks_dir.mkdir(parents=True, exist_ok=True)
+
+    hooks = {
+        "TaskStart": """\
+#!/bin/sh
+# agora-code TaskStart hook — inject session context when a new task begins.
+INPUT=$(cat)
+CONTEXT=$(agora-code inject --quiet 2>/dev/null)
+TASK=$(printf '%s' "$INPUT" | python3 -c "
+import sys, json
+try:
+    d = json.loads(sys.stdin.read())
+    print(d.get('taskStart', {}).get('task', ''))
+except Exception:
+    print('')
+" 2>/dev/null)
+if [ -n "$TASK" ]; then
+    SHORT=$(printf '%s' "$TASK" | cut -c1-200)
+    agora-code checkpoint --goal "$SHORT" --quiet 2>/dev/null || true
+fi
+if [ -n "$CONTEXT" ]; then
+    escaped=$(printf '%s' "$CONTEXT" | python3 -c "import sys,json; print(json.dumps(sys.stdin.read()))")
+    printf '{"cancel":false,"contextModification":%s}\\n' "$escaped"
+else
+    printf '{"cancel":false}\\n'
+fi
+""",
+        "TaskResume": """\
+#!/bin/sh
+# agora-code TaskResume hook — re-inject session context when resuming a task.
+INPUT=$(cat)
+CONTEXT=$(agora-code inject --quiet 2>/dev/null)
+if [ -n "$CONTEXT" ]; then
+    escaped=$(printf '%s' "$CONTEXT" | python3 -c "import sys,json; print(json.dumps(sys.stdin.read()))")
+    printf '{"cancel":false,"contextModification":%s}\\n' "$escaped"
+else
+    printf '{"cancel":false}\\n'
+fi
+""",
+        "UserPromptSubmit": """\
+#!/bin/sh
+# agora-code UserPromptSubmit hook — recall relevant learnings for this prompt.
+INPUT=$(cat)
+PROMPT=$(printf '%s' "$INPUT" | python3 -c "
+import sys, json
+try:
+    d = json.loads(sys.stdin.read())
+    print(d.get('userPromptSubmit', {}).get('prompt', ''))
+except Exception:
+    print('')
+" 2>/dev/null)
+if [ -z "$PROMPT" ]; then
+    printf '{"cancel":false}\\n'
+    exit 0
+fi
+LEARNINGS=$(agora-code recall "$PROMPT" --limit 2 2>/dev/null)
+if [ -n "$LEARNINGS" ] && ! printf '%s' "$LEARNINGS" | grep -q "No learnings"; then
+    CONTEXT=$(printf '[agora-code: relevant learnings]\\n%s' "$LEARNINGS")
+    escaped=$(printf '%s' "$CONTEXT" | python3 -c "import sys,json; print(json.dumps(sys.stdin.read()))")
+    printf '{"cancel":false,"contextModification":%s}\\n' "$escaped"
+else
+    printf '{"cancel":false}\\n'
+fi
+""",
+        "PostToolUse": """\
+#!/bin/sh
+# agora-code PostToolUse hook — track file changes, index symbols, detect git commits.
+INPUT=$(cat)
+python3 - <<'PYEOF'
+import sys, json, os, subprocess, shutil
+try:
+    data = json.loads(sys.stdin.read())
+except Exception:
+    print('{"cancel":false}')
+    sys.exit(0)
+ptu = data.get('postToolUse', {})
+tool = ptu.get('tool', '')
+params = ptu.get('parameters', {})
+success = ptu.get('success', True)
+agora = shutil.which('agora-code') or 'agora-code'
+def run(cmd):
+    try:
+        subprocess.run(cmd, capture_output=True, timeout=15)
+    except Exception:
+        pass
+if tool == 'read_file':
+    path = params.get('path', '')
+    if path and os.path.isfile(path):
+        run([agora, 'index', path])
+elif tool in ('write_to_file', 'replace_in_file'):
+    path = params.get('path', '')
+    if path and os.path.isfile(path):
+        run([agora, 'track-diff', path])
+        run([agora, 'index', path])
+elif tool == 'execute_command':
+    command = params.get('command', '')
+    if 'git commit' in command and success:
+        try:
+            sha = subprocess.run(['git', 'rev-parse', '--short', 'HEAD'],
+                                 capture_output=True, text=True, timeout=5).stdout.strip()
+            files = subprocess.run(['git', 'diff-tree', '--no-commit-id', '-r', '--name-only', 'HEAD'],
+                                   capture_output=True, text=True, timeout=5).stdout.strip().splitlines()
+            if files and sha:
+                from agora_code.indexer import tag_commit
+                from agora_code.session import _get_project_id, _get_git_branch
+                tag_commit(sha, files, project_id=_get_project_id(), branch=_get_git_branch())
+            if sha:
+                run([agora, 'learn-from-commit', sha, '--quiet'])
+        except Exception:
+            pass
+elif tool == 'search_files':
+    import re
+    CODE_EXTS = {'.py','.js','.ts','.tsx','.jsx','.go','.rs','.java','.c','.cpp','.cs','.rb','.sh'}
+    for fp in re.findall(r'[\\w./\\-]+\\.\\w+', ptu.get('result', '')):
+        if os.path.splitext(fp)[1] in CODE_EXTS and os.path.isfile(fp):
+            run([agora, 'index', fp])
+print('{"cancel":false}')
+PYEOF
+""",
+        "PreCompact": """\
+#!/bin/sh
+# agora-code PreCompact hook — checkpoint before context truncation.
+agora-code checkpoint --quiet 2>/dev/null || true
+printf '{"cancel":false}\\n'
+""",
+        "TaskComplete": """\
+#!/bin/sh
+# agora-code TaskComplete hook — checkpoint and store conversation summary.
+INPUT=$(cat)
+agora-code checkpoint --quiet 2>/dev/null || true
+python3 - <<'PYEOF'
+import sys, json, subprocess, shutil, re
+try:
+    data = json.loads(sys.stdin.read())
+except Exception:
+    sys.exit(0)
+task = data.get('taskComplete', {}).get('task', '').strip()
+FILLER = re.compile(r'^(hi|hey|hello|ok|okay|yes|no|sure|thanks|bye|lol|cool|great)\\b', re.I)
+if len(task) < 30 or FILLER.match(task) or task.startswith('agora-code '):
+    sys.exit(0)
+agora = shutil.which('agora-code') or 'agora-code'
+subprocess.run([agora, 'learn', f"Session goal: {task.split(chr(10))[0][:150]}",
+                '--confidence', 'confirmed', '--tags', 'conversation-summary'],
+               capture_output=True, timeout=10)
+PYEOF
+printf '{"cancel":false}\\n'
+""",
+        "TaskCancel": """\
+#!/bin/sh
+# agora-code TaskCancel hook — checkpoint when task is cancelled.
+agora-code checkpoint --quiet 2>/dev/null || true
+printf '{"cancel":false}\\n'
+""",
+    }
+
+    installed = []
+    skipped = []
+    for name, content in hooks.items():
+        path = hooks_dir / name
+        if path.exists() and not force:
+            skipped.append(name)
+            continue
+        path.write_text(content, encoding="utf-8")
+        path.chmod(path.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+        installed.append(name)
+
+    if installed:
+        _echo(f"✅ Cline hooks installed → {hooks_dir}")
+        for n in installed:
+            _echo(f"   • {n}")
+        _echo("")
+        _echo("Next: open Cline → Hooks tab → toggle each hook ON")
+    if skipped:
+        _echo(f"⚠️  Skipped (already exist): {', '.join(skipped)} — use --force to overwrite")
 
 
 def _install_claude_code_hooks(force: bool) -> None:

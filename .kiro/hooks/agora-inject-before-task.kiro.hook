@@ -1,0 +1,14 @@
+{
+  "version": "1.0.0",
+  "enabled": true,
+  "name": "agora: inject before task",
+  "description": "Load session context before each spec task starts",
+  "when": {
+    "type": "preTaskExecution"
+  },
+  "then": {
+    "type": "runCommand",
+    "command": "agora-code inject --quiet 2>/dev/null || true",
+    "timeout": 10
+  }
+}

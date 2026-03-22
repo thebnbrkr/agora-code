@@ -1,0 +1,16 @@
+{
+  "version": "1.0.0",
+  "enabled": true,
+  "name": "agora: summarize before readMultipleFiles",
+  "description": "Get AST outline before reading multiple files to save tokens",
+  "when": {
+    "type": "preToolUse",
+    "toolTypes": [
+      "readMultipleFiles"
+    ]
+  },
+  "then": {
+    "type": "askAgent",
+    "prompt": "Before reading these files, call summarize_file from agora-memory for each one to get AST outlines with function names and line numbers. Then use read_file_range to read only the sections relevant to the current task."
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "version": "1.0.0",
+  "enabled": true,
+  "name": "agora: index after editCode",
+  "description": "Index file symbols after an AST-based edit",
+  "when": {
+    "type": "postToolUse",
+    "toolTypes": [
+      "editCode"
+    ]
+  },
+  "then": {
+    "type": "askAgent",
+    "prompt": "Call index_file from agora-memory for the file that was just edited so its updated symbols are searchable in future sessions."
+  }
+}

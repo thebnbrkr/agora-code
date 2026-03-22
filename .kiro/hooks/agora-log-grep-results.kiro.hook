@@ -1,0 +1,16 @@
+{
+  "version": "1.0.0",
+  "enabled": true,
+  "name": "agora: log grep results",
+  "description": "Store grep search history and index matched files",
+  "when": {
+    "type": "postToolUse",
+    "toolTypes": [
+      "grepSearch"
+    ]
+  },
+  "then": {
+    "type": "askAgent",
+    "prompt": "Call log_search from agora-memory with the query that was just searched and the files that matched. Then call index_file for each matched file so their symbols become searchable."
+  }
+}

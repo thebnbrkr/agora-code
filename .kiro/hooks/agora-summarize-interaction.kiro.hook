@@ -1,0 +1,13 @@
+{
+  "version": "1.0.0",
+  "enabled": true,
+  "name": "agora: summarize interaction",
+  "description": "Store a one-sentence summary of what was just done. Runs before agora-z-checkpoint.",
+  "when": {
+    "type": "agentStop"
+  },
+  "then": {
+    "type": "askAgent",
+    "prompt": "In one sentence, summarize what you just answered or did and what the key finding was. Call store_learning from agora-memory with that sentence tagged 'conversation'. Stop after store_learning completes. Do not call any other tools."
+  }
+}

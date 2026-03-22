@@ -1,0 +1,26 @@
+{
+  "mcpServers": {
+    "agora-memory": {
+      "command": "agora-code",
+      "args": ["memory-server"],
+      "autoApprove": [
+        "get_session_context",
+        "save_checkpoint",
+        "store_learning",
+        "recall_learnings",
+        "complete_session",
+        "get_memory_stats",
+        "list_sessions",
+        "recall_file_history",
+        "get_file_symbols",
+        "search_symbols",
+        "summarize_file",
+        "read_file_range",
+        "index_file",
+        "log_search",
+        "store_team_learning",
+        "recall_team"
+      ]
+    }
+  }
+}

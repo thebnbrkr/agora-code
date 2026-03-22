@@ -1,0 +1,14 @@
+{
+  "version": "1.0.0",
+  "enabled": true,
+  "name": "agora: checkpoint",
+  "description": "Save checkpoint after every agent stop. Runs after agora-a-summarize-interaction so the summary is already stored.",
+  "when": {
+    "type": "agentStop"
+  },
+  "then": {
+    "type": "runCommand",
+    "command": "agora-code checkpoint --quiet 2>/dev/null || true",
+    "timeout": 10
+  }
+}

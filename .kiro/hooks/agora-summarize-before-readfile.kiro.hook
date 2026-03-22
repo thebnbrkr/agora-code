@@ -1,0 +1,16 @@
+{
+  "version": "1.0.0",
+  "enabled": true,
+  "name": "agora: summarize before readFile",
+  "description": "Get AST outline before reading a file to save tokens",
+  "when": {
+    "type": "preToolUse",
+    "toolTypes": [
+      "readFile"
+    ]
+  },
+  "then": {
+    "type": "askAgent",
+    "prompt": "Before reading this file, call summarize_file from agora-memory to get the AST outline with function names and line numbers. Then use read_file_range to read only the section relevant to the current task."
+  }
+}
