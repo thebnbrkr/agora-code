@@ -688,10 +688,10 @@ export ANTHROPIC_API_KEY=sk-ant-...   # recommended
 
 The following integrations are planned but not yet available:
 
-- **Gemini CLI hooks** — `BeforeAgent`, `AfterAgent`, `BeforeToolSelection`, `BeforeModel` hooks for Gemini CLI are in progress. These will enable per-turn context injection, response validation, and tool filtering.
-- **GitHub Copilot** — hook support for GitHub Copilot is not yet available.
-- **Cursor shell output summarization** — `afterShellExecution` hook to summarize large shell output (test runs, `git log`, `npm install`) the same way file reads are summarized.
-- **Subagent awareness** — injecting session context into Claude subagents so they don't start blind.
-- **Error memory** — `PostToolUseFailure` hook to track recurring errors and surface prior resolutions.
+- **Gemini CLI hooks**: `BeforeAgent`, `AfterAgent`, `BeforeToolSelection`, `BeforeModel` hooks for Gemini CLI are in progress. These will enable per-turn context injection, response validation, and tool filtering.
+- **GitHub Copilot**: hook support for GitHub Copilot is not yet available.
+- **Cursor shell output summarization**: `afterShellExecution` hook to summarize large shell output (test runs, `git log`, `npm install`) the same way file reads are summarized.
+- **Subagent awareness**: injecting session context into Claude subagents so they don't start blind.
+- **Error memory**: `PostToolUseFailure` hook to track recurring errors and surface prior resolutions.
 
 See [FUTURE_HOOKS.md](FUTURE_HOOKS.md) for the full roadmap and priority order.
