@@ -660,7 +660,7 @@ which agora-code   # get the full path
 **No embeddings / semantic search not working**
 
 ```
-⚠️  No embedding generated — set OPENAI_API_KEY for semantic recall.
+⚠️ No embedding generated — set OPENAI_API_KEY for semantic recall.
    Keyword search will still work.
 ```
 
