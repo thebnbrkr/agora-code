@@ -21,6 +21,7 @@ HOOKS_DEST="$HOME/.claude/agora-hooks"
 if [ -d "$HOOKS_SRC" ]; then
     mkdir -p "$HOOKS_DEST"
     cp "$HOOKS_SRC"/*.sh "$HOOKS_DEST/"
+    cp "$(dirname "$0")/hooks/bootstrap.sh" "$HOOKS_DEST/bootstrap.sh"
     chmod +x "$HOOKS_DEST"/*.sh
     echo "✅ Hooks installed: $HOOKS_DEST"
 else
