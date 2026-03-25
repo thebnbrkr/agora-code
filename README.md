@@ -110,7 +110,7 @@ agora-code inject
 |---|---|
 | Start a session | Injects last checkpoint + relevant learnings from recent commits |
 | Submit a prompt | Recalls relevant past findings, sets session goal |
-| Read a file > 100 lines | Summarizes it via AST — saves 75–95% of tokens |
+| Read a file > 50 lines | Summarizes it via AST — saves 75–95% of tokens |
 | Edit a file | Tracks the diff, re-indexes symbols |
 | Run `git commit` | Stores learnings derived from the commit |
 | Context window compresses | Checkpoints before, re-injects after |

@@ -2413,7 +2413,7 @@ exit 0
 @click.option("--max-tokens", default=500, help="Token budget for summary")
 @click.option("--json-output", "json_out", is_flag=True, default=False,
               help="Output JSON for hook consumption")
-@click.option("--threshold", default=100, help="Line threshold — files below this pass through")
+@click.option("--threshold", default=50, help="Line threshold — files below this pass through")
 def summarize(file_path, max_tokens, json_out, threshold):
     """Summarize a file's structure for token-efficient context injection.
 

@@ -11,7 +11,7 @@ Everything is automatic via Claude Code hooks. When you read a file, symbols and
 ## Always do this
 
 - **At session start**, run `agora-code inject` to load previous session context
-- **STOP — before ANY Read tool call on a file over ~100 lines:**
+- **STOP — before ANY Read tool call on a file over ~50 lines:**
   1. Run `agora-code summarize <file>` first
   2. Then use `offset+limit` to read ONLY the sections you need
   Skipping this wastes the entire point of the tool.
@@ -38,7 +38,7 @@ Everything is automatic via Claude Code hooks. When you read a file, symbols and
 
 ```
 Start     → agora-code inject
-Working   → agora-code summarize <file> before reading any file over ~100 lines
+Working   → agora-code summarize <file> before reading any file over ~50 lines
 Step done → agora-code checkpoint --goal "..." --action "..."
 All done  → agora-code complete --summary "..."
 ```

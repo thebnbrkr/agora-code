@@ -33,7 +33,7 @@ All done      → agora-code complete --summary "..."  # archive to long-term me
 | Command | When to use |
 |---|---|
 | `agora-code inject` | Manually reload context (auto-fires on SessionStart) |
-| `agora-code summarize <file>` | Before reading any file over ~100 lines |
+| `agora-code summarize <file>` | Before reading any file over ~50 lines |
 | `agora-code learn "<text>"` | Force-save a specific finding right now |
 | `agora-code recall "<query>"` | Search past findings for a topic |
 | `agora-code checkpoint --goal "..."` | Save progress mid-task |
@@ -70,6 +70,6 @@ SYMBOL INDEX
 ## Rules
 
 - **Always** run `agora-code status -p` (not `status`) to see per-project stats
-- **Always** run `agora-code summarize <file>` before reading any file over ~100 lines
+- **Always** run `agora-code summarize <file>` before reading any file over ~50 lines
 - `agora-code learn` is optional — on-stop.sh auto-extracts findings from transcripts
 - `agora-code recall` is optional — on-prompt.sh auto-recalls on every prompt
