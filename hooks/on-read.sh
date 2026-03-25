@@ -1,9 +1,4 @@
 #!/bin/sh
-STAMP="/tmp/agora_last_hook_$(basename "$0")"
-NOW=$(date +%s)
-LAST=$(cat "$STAMP" 2>/dev/null || echo 0)
-if [ $((NOW - LAST)) -lt 2 ]; then exit 0; fi
-echo "$NOW" > "$STAMP"
 # on-read.sh — PostToolUse(Read): index file symbols on first read.
 # Input JSON: {"tool_input":{"file_path":"...","offset":N,"limit":N},"tool_response":...}
 
