@@ -4,7 +4,7 @@ This project provides persistent memory and API discovery for AI agents.
 
 ## Always do this
 
-- **Before reading any file over ~200 lines**, run `agora-code summarize <file>` first
+- **Before reading any file over ~50 lines**, run `agora-code summarize <file>` first
 - **At session start**, run `agora-code inject` to load previous session context
 - **When you discover something non-obvious**, run `agora-code learn "<finding>"`
 - **Use `agora-code recall "<query>"` before starting any task** that might have been worked on before

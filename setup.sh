@@ -29,7 +29,7 @@ else
 fi
 
 # Copy skill file so Claude Code surfaces agora-code as a skill
-SKILL_SRC="$(dirname "$0")/skills/agora-code/SKILL.md"
+SKILL_SRC="$(dirname "$0")/skills/agora/SKILL.md"
 SKILL_DEST="$HOME/.claude/skills/agora-code/SKILL.md"
 
 if [ -f "$SKILL_SRC" ]; then
