@@ -7,7 +7,7 @@ agora-code gives you persistent memory across sessions. Hooks handle most things
 
 ## Your rules (always follow these)
 
-1. **Before reading any file over ~100 lines** — run `agora-code summarize <file>` first. Do not use the Read tool or an Explore subagent on a large file without summarizing first. This is mandatory, not optional.
+1. **Before reading any file over ~50 lines** — run `agora-code summarize <file>` first. Do not use the Read tool or an Explore subagent on a large file without summarizing first. This is mandatory, not optional.
 2. **At session start** — run `agora-code inject` to load prior context (checkpoints, learnings, git state, symbol index).
 3. **When done with a task** — run `agora-code complete --summary "..."` to archive the session.
 
@@ -39,7 +39,7 @@ All done      → agora-code complete --summary "..."  # archive session
 | Command | When to use |
 |---|---|
 | `agora-code inject` | Load prior session context |
-| `agora-code summarize <file>` | **Before reading any file over ~100 lines** |
+| `agora-code summarize <file>` | **Before reading any file over ~50 lines** |
 | `agora-code learn "<text>"` | Force-save a specific finding right now |
 | `agora-code recall "<query>"` | Search past findings for a topic |
 | `agora-code checkpoint --goal "..."` | Save progress mid-task |
