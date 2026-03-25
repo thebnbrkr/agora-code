@@ -1,4 +1,9 @@
 #!/bin/sh
+STAMP="/tmp/agora_last_hook_$(basename "$0")"
+NOW=$(date +%s)
+LAST=$(cat "$STAMP" 2>/dev/null || echo 0)
+if [ $((NOW - LAST)) -lt 2 ]; then exit 0; fi
+echo "$NOW" > "$STAMP"
 # on-stop.sh — fires when Claude finishes a response.
 #
 # 1. Reads JSONL transcript (via transcript_path or auto-discovery)

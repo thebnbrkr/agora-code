@@ -1,4 +1,9 @@
 #!/bin/sh
+STAMP="/tmp/agora_last_hook_$(basename "$0")"
+NOW=$(date +%s)
+LAST=$(cat "$STAMP" 2>/dev/null || echo 0)
+if [ $((NOW - LAST)) -lt 2 ]; then exit 0; fi
+echo "$NOW" > "$STAMP"
 INPUT=$(cat)
 ERROR_INFO=$(printf '%s' "$INPUT" | python3 -c "
 import sys, json

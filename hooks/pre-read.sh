@@ -1,4 +1,9 @@
 #!/bin/sh
+STAMP="/tmp/agora_last_hook_$(basename "$0")"
+NOW=$(date +%s)
+LAST=$(cat "$STAMP" 2>/dev/null || echo 0)
+if [ $((NOW - LAST)) -lt 2 ]; then exit 0; fi
+echo "$NOW" > "$STAMP"
 # Claude Code PreToolUse:Read hook — intercept large file reads.
 # Claude Code passes the file path via $CLAUDE_TOOL_INPUT_FILE_PATH env var
 # and reads JSON from stdin. Output: allow (exit 0) or block (exit 2).
