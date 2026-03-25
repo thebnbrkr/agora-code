@@ -5,26 +5,23 @@ LAST=$(cat "$STAMP" 2>/dev/null || echo 0)
 if [ $((NOW - LAST)) -lt 2 ]; then exit 0; fi
 echo "$NOW" > "$STAMP"
 INPUT=$(cat)
-python3 - << 'PYEOF'
+TMPFILE=$(mktemp /tmp/agora_hook_XXXXXX)
+printf '%s' "$INPUT" > "$TMPFILE"
+
+python3 - "$TMPFILE" << 'PYEOF'
 import sys, json, os
 from pathlib import Path
 
-try:
-    import select
-    data = sys.stdin.read() if select.select([sys.stdin], [], [], 0)[0] else ''
-except Exception:
-    data = ''
+with open(sys.argv[1] if len(sys.argv) > 1 else "/dev/null") as _f:
+    try:
+        hook = json.load(_f)
+    except Exception:
+        sys.exit(0)
 
-try:
-    d = json.loads(data) if data else {}
-except Exception:
-    d = {}
-
-response = str(d.get('tool_response', ''))
+response = str(hook.get('tool_response', ''))
 CODE_EXTS = {'.py','.js','.ts','.jsx','.tsx','.go','.rs','.java','.c','.cpp','.cs','.rb','.swift','.kt','.php','.sh'}
 seen = set()
 for line in response.splitlines():
-    # files_with_matches mode: just a path; content mode: path:linenum:text
     candidate = line.split(':')[0].strip()
     if candidate and candidate not in seen and os.path.isfile(candidate):
         if Path(candidate).suffix.lower() in CODE_EXTS:
@@ -50,4 +47,6 @@ except Exception:
 
 sys.exit(0)
 PYEOF
+
+rm -f "$TMPFILE"
 exit 0

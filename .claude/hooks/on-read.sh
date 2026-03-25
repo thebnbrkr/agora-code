@@ -1,20 +1,18 @@
 #!/bin/sh
 INPUT=$(cat)
-python3 - << 'PYEOF'
+TMPFILE=$(mktemp /tmp/agora_hook_XXXXXX)
+printf '%s' "$INPUT" > "$TMPFILE"
+
+python3 - "$TMPFILE" << 'PYEOF'
 import sys, json, os
 
-try:
-    import select
-    data = sys.stdin.read() if select.select([sys.stdin], [], [], 0)[0] else ''
-except Exception:
-    data = ''
+with open(sys.argv[1] if len(sys.argv) > 1 else "/dev/null") as _f:
+    try:
+        hook = json.load(_f)
+    except Exception:
+        sys.exit(0)
 
-try:
-    d = json.loads(data) if data else {}
-except Exception:
-    d = {}
-
-file_path = (d.get('tool_input') or {}).get('file_path', '')
+file_path = (hook.get('tool_input') or {}).get('file_path', '')
 if not file_path or not os.path.isfile(file_path):
     sys.exit(0)
 
@@ -54,4 +52,6 @@ except Exception:
 
 sys.exit(0)
 PYEOF
+
+rm -f "$TMPFILE"
 exit 0

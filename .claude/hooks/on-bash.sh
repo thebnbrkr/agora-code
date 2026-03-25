@@ -5,35 +5,39 @@ LAST=$(cat "$STAMP" 2>/dev/null || echo 0)
 if [ $((NOW - LAST)) -lt 2 ]; then exit 0; fi
 echo "$NOW" > "$STAMP"
 INPUT=$(cat)
-python3 - << 'PYEOF'
+TMPFILE=$(mktemp /tmp/agora_hook_XXXXXX)
+printf '%s' "$INPUT" > "$TMPFILE"
+
+python3 - "$TMPFILE" << 'PYEOF'
 import sys, json, os, subprocess
 
-try:
-    import select
-    data = sys.stdin.read() if select.select([sys.stdin], [], [], 0)[0] else ''
-except Exception:
-    data = ''
+with open(sys.argv[1] if len(sys.argv) > 1 else "/dev/null") as _f:
+    try:
+        hook = json.load(_f)
+    except Exception:
+        sys.exit(0)
 
-try:
-    d = json.loads(data) if data else {}
-except Exception:
-    d = {}
-
-command = (d.get('tool_input') or {}).get('command', '')
+command = (hook.get('tool_input') or {}).get('command', '')
 if 'git' not in command or 'commit' not in command:
     sys.exit(0)
 
 try:
-    result = subprocess.run(['git','rev-parse','--short','HEAD'], capture_output=True, text=True, timeout=5)
-    commit_sha = result.stdout.strip() if result.returncode == 0 else ''
-    if not commit_sha:
-        sys.exit(0)
-    result = subprocess.run(
-        ['git','diff-tree','--no-commit-id','-r','--name-only', commit_sha],
-        capture_output=True, text=True, timeout=5
-    )
-    files = [f.strip() for f in result.stdout.splitlines() if f.strip()]
+    r = subprocess.run(['git', 'rev-parse', '--short', 'HEAD'], capture_output=True, text=True, timeout=5)
+    commit_sha = r.stdout.strip() if r.returncode == 0 else ''
 except Exception:
+    commit_sha = ''
+
+if not commit_sha:
+    sys.exit(0)
+
+try:
+    r = subprocess.run(['git', 'diff-tree', '--no-commit-id', '-r', '--name-only', commit_sha],
+                       capture_output=True, text=True, timeout=5)
+    files = [f.strip() for f in r.stdout.splitlines() if f.strip()]
+except Exception:
+    files = []
+
+if not files:
     sys.exit(0)
 
 try:
@@ -43,6 +47,12 @@ try:
 except Exception:
     pass
 
-sys.exit(0)
+try:
+    subprocess.run(['agora-code', 'learn-from-commit', commit_sha, '--quiet'],
+                   timeout=30, capture_output=True)
+except Exception:
+    pass
 PYEOF
+
+rm -f "$TMPFILE"
 exit 0

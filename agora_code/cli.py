@@ -1801,7 +1801,7 @@ def _get_skill_md_content() -> str | None:
     """Return SKILL.md content — bundled inside the package so it works after pip install."""
     candidates = [
         Path(__file__).parent / "SKILL.md",                                    # installed package
-        Path(__file__).parent.parent / "skills" / "agora-code" / "SKILL.md",  # dev/editable
+        Path(__file__).parent.parent / ".claude" / "skills" / "agora-code" / "SKILL.md",  # dev/editable
     ]
     for p in candidates:
         if p.exists():
@@ -2151,21 +2151,19 @@ exit 0
     # --- on-read.sh: auto-index symbols after Claude reads a code file ---
     on_read = f"""#!/bin/sh
 INPUT=$(cat)
-python3 - << 'PYEOF'
+TMPFILE=$(mktemp /tmp/agora_hook_XXXXXX)
+printf '%s' "$INPUT" > "$TMPFILE"
+
+python3 - "$TMPFILE" << 'PYEOF'
 import sys, json, os
 
-try:
-    import select
-    data = sys.stdin.read() if select.select([sys.stdin], [], [], 0)[0] else ''
-except Exception:
-    data = ''
+with open(sys.argv[1] if len(sys.argv) > 1 else "/dev/null") as _f:
+    try:
+        hook = json.load(_f)
+    except Exception:
+        sys.exit(0)
 
-try:
-    d = json.loads(data) if data else {{}}
-except Exception:
-    d = {{}}
-
-file_path = (d.get('tool_input') or {{}}).get('file_path', '')
+file_path = (hook.get('tool_input') or {{}}).get('file_path', '')
 if not file_path or not os.path.isfile(file_path):
     sys.exit(0)
 
@@ -2205,28 +2203,28 @@ except Exception:
 
 sys.exit(0)
 PYEOF
+
+rm -f "$TMPFILE"
 exit 0
 """
 
     # --- on-grep.sh: PostToolUse(Grep): index files matched by grep results ---
     on_grep = f"""#!/bin/sh
 INPUT=$(cat)
-python3 - << 'PYEOF'
+TMPFILE=$(mktemp /tmp/agora_hook_XXXXXX)
+printf '%s' "$INPUT" > "$TMPFILE"
+
+python3 - "$TMPFILE" << 'PYEOF'
 import sys, json, os
 from pathlib import Path
 
-try:
-    import select
-    data = sys.stdin.read() if select.select([sys.stdin], [], [], 0)[0] else ''
-except Exception:
-    data = ''
+with open(sys.argv[1] if len(sys.argv) > 1 else "/dev/null") as _f:
+    try:
+        hook = json.load(_f)
+    except Exception:
+        sys.exit(0)
 
-try:
-    d = json.loads(data) if data else {{}}
-except Exception:
-    d = {{}}
-
-response = str(d.get('tool_response', ''))
+response = str(hook.get('tool_response', ''))
 CODE_EXTS = {{'.py','.js','.ts','.jsx','.tsx','.go','.rs','.java','.c','.cpp','.cs','.rb','.swift','.kt','.php','.sh'}}
 seen = set()
 for line in response.splitlines():
@@ -2256,27 +2254,27 @@ except Exception:
 
 sys.exit(0)
 PYEOF
+
+rm -f "$TMPFILE"
 exit 0
 """
 
     # --- on-edit.sh: re-index symbols after Claude edits a file ---
     on_edit = f"""#!/bin/sh
 INPUT=$(cat)
-python3 - << 'PYEOF'
+TMPFILE=$(mktemp /tmp/agora_hook_XXXXXX)
+printf '%s' "$INPUT" > "$TMPFILE"
+
+python3 - "$TMPFILE" << 'PYEOF'
 import sys, json, os, subprocess
 
-try:
-    import select
-    data = sys.stdin.read() if select.select([sys.stdin], [], [], 0)[0] else ''
-except Exception:
-    data = ''
+with open(sys.argv[1] if len(sys.argv) > 1 else "/dev/null") as _f:
+    try:
+        hook = json.load(_f)
+    except Exception:
+        sys.exit(0)
 
-try:
-    d = json.loads(data) if data else {{}}
-except Exception:
-    d = {{}}
-
-file_path = (d.get('tool_input') or {{}}).get('file_path', '')
+file_path = (hook.get('tool_input') or {{}}).get('file_path', '')
 if not file_path or not os.path.isfile(file_path):
     sys.exit(0)
 
@@ -2284,10 +2282,8 @@ CODE_EXTS = {{'.py','.js','.ts','.jsx','.tsx','.go','.rs','.java','.c','.cpp','.
 if not any(file_path.endswith(e) for e in CODE_EXTS):
     sys.exit(0)
 
-# Track the diff
-agora_bin = '{agora_bin}'
 try:
-    subprocess.run([agora_bin, 'track-diff', file_path], capture_output=True, timeout=10)
+    subprocess.run(['{agora_bin}', 'track-diff', file_path], capture_output=True, timeout=10)
 except Exception:
     pass
 
@@ -2300,40 +2296,40 @@ except Exception:
 
 sys.exit(0)
 PYEOF
+
+rm -f "$TMPFILE"
 exit 0
 """
 
     # --- on-bash.sh: tag committed files when git commit detected ---
     on_bash = f"""#!/bin/sh
 INPUT=$(cat)
-python3 - << 'PYEOF'
+TMPFILE=$(mktemp /tmp/agora_hook_XXXXXX)
+printf '%s' "$INPUT" > "$TMPFILE"
+
+python3 - "$TMPFILE" << 'PYEOF'
 import sys, json, os, subprocess
 
-try:
-    import select
-    data = sys.stdin.read() if select.select([sys.stdin], [], [], 0)[0] else ''
-except Exception:
-    data = ''
+with open(sys.argv[1] if len(sys.argv) > 1 else "/dev/null") as _f:
+    try:
+        hook = json.load(_f)
+    except Exception:
+        sys.exit(0)
 
-try:
-    d = json.loads(data) if data else {{}}
-except Exception:
-    d = {{}}
-
-command = (d.get('tool_input') or {{}}).get('command', '')
+command = (hook.get('tool_input') or {{}}).get('command', '')
 if 'git' not in command or 'commit' not in command:
     sys.exit(0)
 
 try:
-    result = subprocess.run(['git','rev-parse','--short','HEAD'], capture_output=True, text=True, timeout=5)
-    commit_sha = result.stdout.strip() if result.returncode == 0 else ''
+    r = subprocess.run(['git', 'rev-parse', '--short', 'HEAD'], capture_output=True, text=True, timeout=5)
+    commit_sha = r.stdout.strip() if r.returncode == 0 else ''
     if not commit_sha:
         sys.exit(0)
-    result = subprocess.run(
-        ['git','diff-tree','--no-commit-id','-r','--name-only', commit_sha],
+    r = subprocess.run(
+        ['git', 'diff-tree', '--no-commit-id', '-r', '--name-only', commit_sha],
         capture_output=True, text=True, timeout=5
     )
-    files = [f.strip() for f in result.stdout.splitlines() if f.strip()]
+    files = [f.strip() for f in r.stdout.splitlines() if f.strip()]
 except Exception:
     sys.exit(0)
 
@@ -2344,8 +2340,16 @@ try:
 except Exception:
     pass
 
+try:
+    subprocess.run(['{agora_bin}', 'learn-from-commit', commit_sha, '--quiet'],
+                   timeout=30, capture_output=True)
+except Exception:
+    pass
+
 sys.exit(0)
 PYEOF
+
+rm -f "$TMPFILE"
 exit 0
 """
 

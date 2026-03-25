@@ -6,9 +6,6 @@ What's planned. Core hook coverage for Claude Code, Cursor, and Gemini CLI is al
 
 ## Distribution
 
-**Add to the official Claude Code plugin marketplace**
-List agora-code in `anthropics/claude-plugins-official` so users can install it with a single command via `/plugin install`. Currently requires manual marketplace registration.
-
 **Expand IDE and agent support**
 Add hook support for Cline, Amazon Kiro, and other agents/IDEs as their hook systems mature. The pattern is consistent across editors — each needs a `.{editor}/hooks/` directory and config file.
 
