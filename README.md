@@ -18,74 +18,116 @@ agora-code fixes this by automatically:
 
 ## Install
 
-### Claude Code plugin (recommended)
-
-```
-/plugin marketplace add thebnbrkr/agora-code
-/plugin install agora-code@thebnbrkr/agora-code
-```
-
-Restart Claude Code. No further setup needed — hooks wire up automatically.
-
-**Verify:**
-```bash
-agora-code status        # current session + DB stats
-agora-code status -p     # scoped to this repo only
-```
-
-### pip (manual)
+### Step 1 — Install the package (once, globally)
 
 ```bash
 pip install git+https://github.com/thebnbrkr/agora-code.git
 ```
 
-Then run once inside your project and restart your editor:
+This installs the `agora-code` command. You only ever do this once.
+
+**Verify it worked:**
+```bash
+agora-code --version
+```
+
+> **macOS note:** If you get a permission error, use `pip install --user` instead. Then add the binary to your PATH:
+> ```bash
+> pip install --user git+https://github.com/thebnbrkr/agora-code.git
+> export PATH="$(python3 -m site --user-base)/bin:$PATH"
+> # add that export line to ~/.zshrc or ~/.bashrc to make it permanent
+> ```
+
+---
+
+### Step 2 — Set up a project (once per repo)
+
+Inside any project you want agora-code to track:
 
 ```bash
 cd your-project
 agora-code install-hooks --claude-code
 ```
 
-Optional extras:
+This does four things:
+1. Writes `.claude/settings.json` — wires up hooks so Claude Code fires them automatically
+2. Writes `.claude/hooks/*.sh` — the hook scripts that run on read, edit, commit, stop
+3. Installs `~/.claude/skills/agora-code/SKILL.md` globally — enables the `/agora-code` skill in all repos (only happens once)
+4. Writes `.mcp.json` — registers the memory MCP server for this project
 
-```bash
-pip install "git+https://github.com/thebnbrkr/agora-code[local]"    # local embeddings, offline
-pip install "git+https://github.com/thebnbrkr/agora-code[openai]"   # OpenAI embeddings
-pip install "git+https://github.com/thebnbrkr/agora-code[gemini]"   # Gemini embeddings
-pip install "git+https://github.com/thebnbrkr/agora-code[all]"      # everything
+> If `.claude/settings.json` already exists in your project, use `--force` to overwrite:
+> ```bash
+> agora-code install-hooks --claude-code --force
+> ```
+
+**Restart Claude Code** after running this.
+
+---
+
+### Step 3 — Start your first session
+
+Open Claude Code in your project. At the start of every session, type:
+
+```
+/agora-code
 ```
 
-### Cursor / other editors
+This loads the skill — it tells Claude the rules for how to use agora-code (when to inject context, when to summarize files, when to save progress). You need to do this once per session.
 
-**Step 1 — Hooks** (session inject + file tracking):
+Then run:
 
 ```bash
-mkdir -p .cursor/hooks
-cp /path/to/agora-code/.cursor/hooks.json .cursor/
-cp /path/to/agora-code/.cursor/hooks/*.sh .cursor/hooks/
-chmod +x .cursor/hooks/*.sh
+agora-code inject
 ```
 
-Restart Cursor.
+This loads your previous session context (last checkpoint, learnings, git state) into the conversation.
 
-**Step 2 — MCP** (so the AI can call memory tools directly):
+---
 
-Settings → MCP → Edit in settings.json:
+### That's it. Here's what happens automatically from now on:
+
+| When you... | agora-code automatically... |
+|---|---|
+| Start a session | Injects last checkpoint + relevant learnings |
+| Submit a prompt | Recalls relevant past findings |
+| Read a large file | Summarizes it first (saves tokens) |
+| Edit a file | Re-indexes symbols, tracks the diff |
+| Run `git commit` | Stores learnings from the commit |
+| End a session | Parses the transcript into a structured checkpoint |
+
+---
+
+### Optional: better recall with embeddings
+
+By default, `recall` uses keyword search. For semantic (fuzzy) search:
+
+```bash
+# pick one:
+export OPENAI_API_KEY=sk-...
+export GEMINI_API_KEY=...
+pip install "git+https://github.com/thebnbrkr/agora-code[local]"  # offline, no API key needed
+```
+
+---
+
+### Cursor / Claude Desktop / other MCP editors
+
+Install the package (same Step 1 above), then add to your editor's MCP config:
 
 ```json
 {
   "mcpServers": {
     "agora-memory": {
-      "command": "/full/path/to/agora-code",
+      "command": "agora-code",
       "args": ["memory-server"]
     }
   }
 }
 ```
 
-Use `which agora-code` to get the full path. Restart Cursor.
+Use `which agora-code` to get the full path if your editor can't find the binary. Restart your editor.
 
-> **Note:** Gemini CLI and GitHub Copilot integrations are currently a work in progress. Hook support for those editors is planned — see [FUTURE_HOOKS.md](FUTURE_HOOKS.md) for the roadmap.
+> Hook-based auto-tracking (file indexing, transcript parsing) is Claude Code only. In Cursor and Claude Desktop, use the MCP tools directly: `get_session_context`, `save_checkpoint`, `store_learning`, `recall_learnings`.
 
 ---
 
@@ -107,21 +149,9 @@ Memory is stored in three layers:
 └─────────────────────────────────────────────────────────┘
 ┌─────────────────────────────────────────────────────────┐
 │  Layer 3: Semantic / keyword search                      │
-│  sqlite-vec for vector similarity (optional).            │
 │  FTS5/BM25 keyword search — always works, zero config.   │
-│  Local embeddings via sentence-transformers (offline).   │
+│  Optional: vector similarity via embeddings.             │
 └─────────────────────────────────────────────────────────┘
-```
-
-### Session lifecycle
-
-```
-Start     →  SessionStart hook injects last checkpoint + top learnings
-Prompt    →  on-prompt.sh recalls relevant learnings, sets goal
-Working   →  on-read / on-edit index symbols and diffs as you go
-Compact   →  PreCompact hook checkpoints before context window compresses
-Stop      →  on-stop.sh parses transcript → structured checkpoint in DB
-Done      →  agora-code complete --summary "..." archives to long-term memory
 ```
 
 ### Claude Code hooks
@@ -144,7 +174,7 @@ Done      →  agora-code complete --summary "..." archives to long-term memory
 
 #### `agora-code inject`
 
-Print compressed session context for injection into any coding agent. Used automatically by the SessionStart hook — run manually to see what gets injected.
+Load your previous session context into the conversation. Run this at the start of every session (the SessionStart hook does it automatically, but you can run it manually too).
 
 ```bash
 agora-code inject                   # auto-picks compression level
@@ -153,24 +183,14 @@ agora-code inject --raw             # print raw session JSON
 agora-code inject --quiet           # exit silently if no session (for hooks)
 ```
 
-| Option | Description |
-|---|---|
-| `--level` | `index` / `summary` / `detail` / `full` — compression level |
-| `--token-budget` | Max tokens for auto-level selection |
-| `--raw` | Print raw session JSON instead of formatted output |
-| `--quiet` | Exit silently if no session exists (safe for hook use) |
-
 ---
 
 #### `agora-code checkpoint`
 
-Save the current session state to `.agora-code/session.json`. Call this after completing any meaningful step.
+Save current session state. Run after completing any meaningful step.
 
 ```bash
 agora-code checkpoint --goal "Refactor auth module"
-agora-code checkpoint --hypothesis "SessionManager needs a lock"
-agora-code checkpoint --action "Adding retry logic to validate()"
-agora-code checkpoint --file "auth.py:added retry" --file "tests/test_auth.py:updated tests"
 agora-code checkpoint --next "Write test for edge case" --blocker "Waiting on review"
 ```
 
@@ -180,7 +200,6 @@ agora-code checkpoint --next "Write test for edge case" --blocker "Waiting on re
 | `--hypothesis` | Current working theory |
 | `--action` | What you're doing right now |
 | `--context` | Free-text project notes |
-| `--api` | Base URL of the API being tested |
 | `--next` | Next step (repeatable) |
 | `--blocker` | Blocker (repeatable) |
 
@@ -188,7 +207,7 @@ agora-code checkpoint --next "Write test for edge case" --blocker "Waiting on re
 
 #### `agora-code complete`
 
-Archive the current session to long-term memory. Call when you're done with a task.
+Archive the session to long-term memory. Run when you're done with a task.
 
 ```bash
 agora-code complete --summary "Refactored auth, added retry logic"
@@ -204,7 +223,7 @@ agora-code complete --summary "Partial progress on rate limiting" --outcome part
 
 #### `agora-code restore`
 
-List or restore a past session as the active session.
+List or restore a past session.
 
 ```bash
 agora-code restore                                  # list available sessions
@@ -215,16 +234,12 @@ agora-code restore 2026-03-08-debug-post-users      # restore specific session
 
 #### `agora-code status`
 
-Show the current session state and DB statistics.
+Show current session state and DB statistics.
 
 ```bash
 agora-code status           # global counts
 agora-code status -p        # scoped to the current repo
 ```
-
-| Option | Description |
-|---|---|
-| `-p` / `--project` | Scope counts to the current repo only |
 
 ---
 
@@ -242,7 +257,6 @@ agora-code learn "Rate limit is 100 req/min" --endpoint "GET /data" --confidence
 | Option | Description |
 |---|---|
 | `--endpoint` | e.g. `POST /users` |
-| `--api` | Base URL of the API |
 | `--evidence` | Supporting evidence or example |
 | `--confidence` | `confirmed` / `likely` / `hypothesis` |
 | `--tags` | Comma-separated tags |
@@ -251,17 +265,13 @@ agora-code learn "Rate limit is 100 req/min" --endpoint "GET /data" --confidence
 
 #### `agora-code recall`
 
-Search your learnings knowledge base. Uses semantic search with embeddings if configured, otherwise BM25 keyword search.
+Search your learnings knowledge base.
 
 ```bash
 agora-code recall "email validation"
 agora-code recall "rate limit" --limit 10
-agora-code recall                            # show most recent learnings
+agora-code recall                            # show most recent
 ```
-
-| Option | Description |
-|---|---|
-| `-n` / `--limit` | Max results to return |
 
 ---
 
@@ -277,18 +287,13 @@ agora-code remove abc12345
 
 #### `agora-code memory`
 
-Show DB path, row counts, and a short dump of recent sessions and learnings.
+Show DB path, row counts, and recent sessions and learnings.
 
 ```bash
 agora-code memory
-agora-code memory 20              # show 20 entries
-agora-code memory --verbose       # include stored AST summaries and code blocks
+agora-code memory 20
+agora-code memory --verbose
 ```
-
-| Option | Description |
-|---|---|
-| `-n` / `--limit` | Max sessions and learnings to show (default 10) |
-| `-v` / `--verbose` | Print stored AST summaries and code blocks |
 
 ---
 
@@ -296,50 +301,18 @@ agora-code memory --verbose       # include stored AST summaries and code blocks
 
 #### `agora-code summarize`
 
-Summarize a file's structure for token-efficient context injection. Uses a cached AST from the DB when available; otherwise reads from disk. Files under the line threshold are passed through unmodified.
+Summarize a file's structure for token-efficient context. Files under the threshold pass through unmodified.
 
 ```bash
 agora-code summarize agora_code/session.py
-agora-code summarize package.json --json-output     # for hook consumption
-agora-code summarize large_file.py --threshold 50   # lower threshold
+agora-code summarize large_file.py --threshold 50
 ```
-
-| Option | Description |
-|---|---|
-| `--max-tokens` | Token budget for the summary |
-| `--json-output` | Output JSON (used by pre-read hook) |
-| `--threshold` | Line count below which the file passes through unmodified |
-
----
-
-#### `agora-code index`
-
-Re-index a file into the DB (updates `symbol_notes` and `file_snapshots`). Called automatically by `on-edit.sh` — run manually if the DB is out of sync.
-
-```bash
-agora-code index agora_code/auth.py
-```
-
----
-
-#### `agora-code file-history`
-
-Show the tracked change history for a specific file.
-
-```bash
-agora-code file-history agora_code/auth.py
-agora-code file-history agora_code/session.py --limit 5
-```
-
-| Option | Description |
-|---|---|
-| `-n` / `--limit` | Max entries to show |
 
 ---
 
 #### `agora-code track-diff`
 
-Capture a git diff for a file and store a compact summary in memory. Called automatically by hooks — run manually to force a snapshot.
+Capture a git diff and store a compact summary. Called automatically by hooks.
 
 ```bash
 agora-code track-diff agora_code/auth.py
@@ -347,16 +320,30 @@ agora-code track-diff --all               # all uncommitted files
 agora-code track-diff auth.py --committed # diff against HEAD~1
 ```
 
-| Option | Description |
-|---|---|
-| `--all` | Track all uncommitted (staged + unstaged) files |
-| `--committed` | Diff against HEAD~1 instead of working tree |
+---
+
+#### `agora-code file-history`
+
+Show the tracked change history for a file.
+
+```bash
+agora-code file-history agora_code/auth.py
+agora-code file-history agora_code/session.py --limit 5
+```
+
+---
+
+#### `agora-code index`
+
+Re-index a file into the DB. Called automatically by `on-edit.sh`.
+
+```bash
+agora-code index agora_code/auth.py
+```
 
 ---
 
 ### Listing commands
-
-Quick inspection of what's stored in the DB, without needing SQL.
 
 ```bash
 agora-code list-sessions        # archived session records
@@ -367,26 +354,7 @@ agora-code list-file-changes    # per-file diff history
 agora-code list-api-calls       # HTTP calls from serve/chat
 ```
 
-All listing commands accept `-n` / `--limit` to cap the number of results. `list-symbols` also accepts `--file <path>` to filter by file.
-
----
-
-### Setup
-
-#### `agora-code install-hooks`
-
-Install hooks to auto-track file changes.
-
-```bash
-agora-code install-hooks                    # git post-commit hook
-agora-code install-hooks --claude-code      # Claude Code hooks
-agora-code install-hooks --claude-code --force  # overwrite existing
-```
-
-| Option | Description |
-|---|---|
-| `--force` | Overwrite existing hooks |
-| `--claude-code` | Install Claude Code hooks (`.claude/hooks.json` + shell scripts) |
+All accept `-n` / `--limit`. `list-symbols` also accepts `--file <path>`.
 
 ---
 
@@ -402,30 +370,17 @@ Discover all API routes in a codebase or from a live URL.
 agora-code scan ./my-fastapi-app
 agora-code scan https://api.example.com
 agora-code scan ./my-app --output routes.json
-agora-code scan ./node-app --use-llm
-agora-code scan . --cache --quiet           # hook-safe, uses cached routes
 ```
-
-| Option | Description |
-|---|---|
-| `-o` / `--output` | Save discovered routes to a JSON file |
-| `--use-llm` | Enable LLM-assisted extraction (costs tokens) |
-| `--llm-provider` | `openai` or `gemini` |
-| `--format` | `table` / `json` / `mcp` |
-| `--cache` | Use cached `discovered_routes.json` if present |
 
 ---
 
 #### `agora-code serve`
 
-Start an MCP server for your API. Plug into Claude Desktop or Cursor so your AI can call your API directly.
+Start an MCP server for your API. Plug into Claude Desktop or Cursor.
 
 ```bash
 agora-code serve ./my-api --url http://localhost:8000
-agora-code serve https://api.example.com --url https://api.example.com
 ```
-
-Add to Claude Desktop config:
 
 ```json
 {
@@ -438,100 +393,24 @@ Add to Claude Desktop config:
 }
 ```
 
-| Option | Description |
-|---|---|
-| `-u` / `--url` | Base URL of the live API (required) |
-
 ---
 
 #### `agora-code chat`
 
-Start an interactive natural-language chat session against your API.
+Interactive natural-language chat against your API.
 
 ```bash
 agora-code chat ./my-api --url http://localhost:8000
-agora-code chat https://api.example.com --url https://api.example.com --level index
 ```
-
-| Option | Description |
-|---|---|
-| `-u` / `--url` | Base URL of the live API (required) |
-| `--level` | `index` / `summary` / `detail` / `full` — context compression level |
-| `--use-llm` | Enable LLM route extraction |
-| `--auth-token` | Bearer token or API key |
-| `--auth-type` | `bearer` / `api-key` / `basic` / `none` |
-
----
-
-#### `agora-code auth`
-
-Configure authentication for API calls.
-
-```bash
-agora-code auth ./my-api
-agora-code auth ./my-api --type bearer --token mytoken123
-```
-
-| Option | Description |
-|---|---|
-| `--type` | `bearer` / `api-key` / `basic` / `none` |
-| `--token` | Token value (skips prompt if provided) |
-
----
-
-#### `agora-code stats`
-
-Show API call statistics and patterns from memory.
-
-```bash
-agora-code stats ./my-api
-agora-code stats ./my-api --window 48
-```
-
-| Option | Description |
-|---|---|
-| `--window` | Time window in hours for pattern detection |
-
----
-
-#### `agora-code agentify`
-
-Scan a repo and auto-generate workflow code from its API routes.
-
-```bash
-agora-code agentify ./my-api
-agora-code agentify ./my-api --output ./workflows --show-mermaid
-agora-code agentify https://api.example.com --llm-provider claude
-```
-
-| Option | Description |
-|---|---|
-| `--llm-provider` | `auto` / `claude` / `openai` / `gemini` |
-| `--llm-model` | Override the default model |
-| `-o` / `--output` | Directory to write generated flow code |
-| `--show-mermaid` | Print a Mermaid DAG diagram |
 
 ---
 
 #### `agora-code memory-server`
 
-Start a project-agnostic MCP server for day-to-day coding memory. Exposes session and learning tools to any MCP-compatible editor.
+Start a project-agnostic MCP server for coding memory. Exposes session and learning tools to any MCP-compatible editor.
 
 ```bash
 agora-code memory-server
-```
-
-Add to your editor's MCP config:
-
-```json
-{
-  "mcpServers": {
-    "agora-memory": {
-      "command": "agora-code",
-      "args": ["memory-server"]
-    }
-  }
-}
 ```
 
 ---
@@ -545,25 +424,11 @@ Add to your editor's MCP config:
 | `store_learning` | Non-obvious finding: bug, gotcha, architectural decision |
 | `recall_learnings` | Before starting something — check if it was solved before |
 | `get_file_symbols` | All indexed functions/classes for a file with line numbers |
-| `search_symbols` | Search across all indexed symbols by name or description |
+| `search_symbols` | Search across all indexed symbols |
 | `recall_file_history` | See what changed in a file across past sessions |
 | `complete_session` | Archive session to long-term memory when done |
 | `list_sessions` | Find past sessions |
 | `get_memory_stats` | DB usage stats |
-
----
-
-## Embeddings
-
-Works without embeddings (FTS5 keyword search always works). With embeddings, recall is significantly better.
-
-```
-EMBEDDING_PROVIDER=auto (default):
-  1. OpenAI  text-embedding-3-small  — set OPENAI_API_KEY
-  2. Gemini  gemini-embedding-001    — set GEMINI_API_KEY
-  3. Local   BAAI/bge-small-en-v1.5  — pip install agora-code[local]
-  4. None    → FTS5 keyword search only
-```
 
 ---
 
@@ -583,25 +448,21 @@ EMBEDDING_PROVIDER=auto (default):
     └── api_calls        HTTP interaction log
 ```
 
-Override DB path:
-
-```bash
-export AGORA_CODE_DB=/path/to/custom/memory.db
-```
+Override DB path: `export AGORA_CODE_DB=/path/to/custom/memory.db`
 
 ---
 
 ## Environment Variables
 
-| Variable | Purpose | Default |
-|---|---|---|
-| `OPENAI_API_KEY` | OpenAI embeddings + GPT LLM scan | — |
-| `GEMINI_API_KEY` | Gemini embeddings + LLM scan | — |
-| `ANTHROPIC_API_KEY` | Claude for LLM scan + workflow detection | — |
-| `EMBEDDING_PROVIDER` | `auto` / `openai` / `gemini` / `local` | `auto` |
-| `LOCAL_EMBEDDING_MODEL` | sentence-transformers model name | `BAAI/bge-small-en-v1.5` |
-| `AGORA_CODE_DB` | Override memory DB path | `~/.agora-code/memory.db` |
-| `AGORA_AUTH_TOKEN` | Default bearer token for API calls | — |
+| Variable | Purpose |
+|---|---|
+| `OPENAI_API_KEY` | OpenAI embeddings + LLM scan |
+| `GEMINI_API_KEY` | Gemini embeddings + LLM scan |
+| `ANTHROPIC_API_KEY` | Claude for LLM scan + workflow detection |
+| `EMBEDDING_PROVIDER` | `auto` / `openai` / `gemini` / `local` (default: `auto`) |
+| `LOCAL_EMBEDDING_MODEL` | sentence-transformers model (default: `BAAI/bge-small-en-v1.5`) |
+| `AGORA_CODE_DB` | Override memory DB path |
+| `AGORA_AUTH_TOKEN` | Default bearer token for API calls |
 
 ---
 
@@ -610,8 +471,7 @@ export AGORA_CODE_DB=/path/to/custom/memory.db
 All sessions and learnings are scoped per project via git remote URL:
 
 ```bash
-git remote get-url origin
-# → https://github.com/you/your-project  (used as project_id)
+git remote get-url origin   # → used as project_id
 ```
 
 Falls back to directory name if no git remote is set.
@@ -622,27 +482,18 @@ Falls back to directory name if no git remote is set.
 
 ### Testing the pre-read hook manually
 
-The pre-read hook intercepts large file reads and serves a summary instead. To test it, open a **new terminal**, navigate to your project root, and run:
-
 ```bash
 echo '{"file_path": "/path/to/your/large-file.py"}' | bash .claude/hooks/pre-read.sh
 echo "exit code: $?"
 ```
 
-**What you should see:**
-- The file summary printed to stdout
-- `exit code: 2` — meaning the hook blocked the read and served the summary instead
-- If the file is under the 100-line threshold, no output and `exit code: 0` (pass through)
+- Summary printed + `exit code: 2` = hook working correctly (blocked and served summary)
+- No output + `exit code: 0` = file is under the threshold (pass through)
 
-**If the hook fails silently**, check the error log:
-
+Check error log if something goes wrong:
 ```bash
 cat /tmp/agora-pre-read-error.log
 ```
-
-This log is only created when something goes wrong inside the hook (e.g. `agora-code` not found in PATH, bad JSON output, Python parse failure). If the file doesn't exist, the hook ran without errors.
-
-> **Important:** Run hook tests in a new terminal from the project root — not from inside Claude Code. The hooks run as shell scripts and need `agora-code` on your PATH.
 
 ---
 
@@ -650,48 +501,38 @@ This log is only created when something goes wrong inside the hook (e.g. `agora-
 
 **`agora-code` not found in hooks**
 
-Hooks run in a non-interactive shell. If `agora-code` is installed in a virtualenv or via pyenv, the hook may not find it. Fix by using the full path in the hook scripts:
+Hooks run in a non-interactive shell. Most common causes:
 
+*macOS — permission error during install:*
 ```bash
-which agora-code   # get the full path
-# then open .claude/hooks/pre-read.sh and replace `agora-code` with the full path
+pip install --user git+https://github.com/thebnbrkr/agora-code.git
+export PATH="$(python3 -m site --user-base)/bin:$PATH"
+# add the export to ~/.zshrc or ~/.bashrc
+```
+
+*virtualenv or pyenv:* Get the full path and use it in the hook scripts:
+```bash
+which agora-code
+# open .claude/hooks/pre-read.sh etc. and replace `agora-code` with the full path
 ```
 
 **No embeddings / semantic search not working**
 
-```
-⚠️ No embedding generated — set OPENAI_API_KEY for semantic recall.
-   Keyword search will still work.
-```
-
-This is expected if you haven't set an API key. `recall` and `learn` fall back to BM25 keyword search automatically — everything still works, just with less fuzzy matching. To enable semantic search:
-
+Expected if you haven't set an API key. Everything still works with keyword search. To enable semantic search:
 ```bash
-export OPENAI_API_KEY=sk-...   # or GEMINI_API_KEY / pip install agora-code[local]
-```
-
-**`agentify` fails with "No LLM provider"**
-
-```
-❌ No LLM provider for workflow detection.
-```
-
-Route scanning works without an API key. The LLM step (workflow detection) needs one:
-
-```bash
-export ANTHROPIC_API_KEY=sk-ant-...   # recommended
+export OPENAI_API_KEY=sk-...
+# or: export GEMINI_API_KEY=...
+# or: pip install "agora-code[local]"  (offline)
 ```
 
 ---
 
 ## Roadmap
 
-The following integrations are planned but not yet available:
+- **Cursor hook support**: hook-based auto-tracking for Cursor. Currently MCP only.
+- **Gemini CLI hooks**: `BeforeAgent` / `AfterAgent` hooks in progress.
+- **GitHub Copilot**: hook support not yet available.
+- **Subagent awareness**: injecting session context into Claude subagents.
+- **Error memory**: `PostToolUseFailure` hook to track recurring errors.
 
-- **Gemini CLI hooks**: `BeforeAgent`, `AfterAgent`, `BeforeToolSelection`, `BeforeModel` hooks for Gemini CLI are in progress. These will enable per-turn context injection, response validation, and tool filtering.
-- **GitHub Copilot**: hook support for GitHub Copilot is not yet available.
-- **Cursor shell output summarization**: `afterShellExecution` hook to summarize large shell output (test runs, `git log`, `npm install`) the same way file reads are summarized.
-- **Subagent awareness**: injecting session context into Claude subagents so they don't start blind.
-- **Error memory**: `PostToolUseFailure` hook to track recurring errors and surface prior resolutions.
-
-See [FUTURE_HOOKS.md](FUTURE_HOOKS.md) for the full roadmap and priority order.
+See [FUTURE_HOOKS.md](FUTURE_HOOKS.md) for the full roadmap.
