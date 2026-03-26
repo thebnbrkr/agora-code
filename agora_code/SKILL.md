@@ -3,6 +3,11 @@ name: agora-code
 description: Use agora-code memory tools — inject session context, learn findings, recall past work, checkpoint progress, and summarize large files
 ---
 
+> **STOP — before you do anything else:**
+> Run `agora-code summarize <file>` before reading ANY file over ~50 lines.
+> Do NOT use Read or an Explore subagent on a large file without summarizing first.
+> **This is not optional. The Explore subagent is blocked in agora-code projects.**
+
 agora-code gives you persistent memory across sessions. Hooks handle most things automatically, but **you must follow the rules below** — they are not optional.
 
 ## Your rules (always follow these)
@@ -10,6 +15,8 @@ agora-code gives you persistent memory across sessions. Hooks handle most things
 1. **Before reading any file over ~50 lines** — run `agora-code summarize <file>` first. Do not use the Read tool or an Explore subagent on a large file without summarizing first. This is mandatory, not optional.
 2. **At session start** — run `agora-code inject` to load prior context (checkpoints, learnings, git state, symbol index).
 3. **When done with a task** — run `agora-code complete --summary "..."` to archive the session.
+4. **Always** run `agora-code status -p` (not `status`) to see per-project stats.
+5. **Do not ask the user to set a goal** — infer it from what they're working on.
 
 ## What the hooks handle automatically (no action needed)
 
@@ -28,10 +35,10 @@ PostCompact re-injects context automatically after context compaction.
 ## Session lifecycle
 
 ```
-SessionStart  → agora-code inject                   # load prior context
-Working       → agora-code summarize <file>          # before every large file
-Step done     → agora-code checkpoint --goal "..."   # optional mid-task save
-All done      → agora-code complete --summary "..."  # archive session
+SessionStart  → agora-code inject                        # load prior context
+Working       → agora-code summarize <file> FIRST        # ← MANDATORY before any large file
+Step done     → agora-code checkpoint --goal "..."        # optional mid-task save
+All done      → agora-code complete --summary "..."       # archive session
 ```
 
 ## Manual commands reference
@@ -43,7 +50,7 @@ All done      → agora-code complete --summary "..."  # archive session
 | `agora-code learn "<text>"` | Force-save a specific finding right now |
 | `agora-code recall "<query>"` | Search past findings for a topic |
 | `agora-code checkpoint --goal "..."` | Save progress mid-task |
-| `agora-code status` | Check session and DB stats |
+| `agora-code status -p` | Check session and DB stats for this project |
 | `agora-code complete --summary "..."` | Archive session when done |
 
 ## inject output format
