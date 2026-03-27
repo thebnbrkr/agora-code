@@ -5,8 +5,8 @@ description: Use agora-code memory tools — inject session context, learn findi
 
 > **STOP — before you do anything else:**
 > Run `agora-code summarize <file>` before reading ANY file over ~50 lines.
-> Do NOT use Read or an Explore subagent on a large file without summarizing first.
-> **This is not optional. The Explore subagent is blocked in agora-code projects.**
+> Do NOT use Read, shell commands (`cat`, `head`, `tail`, etc.), or an Explore subagent on a large file without summarizing first.
+> **This is not optional. The Explore subagent is mechanically blocked. Shell commands bypass hooks — don't use them to read files.**
 
 agora-code gives you persistent memory across sessions. Hooks handle most things automatically, but **you must follow the rules below** — they are not optional.
 
@@ -22,6 +22,7 @@ agora-code gives you persistent memory across sessions. Hooks handle most things
 
 | Hook | Event | Does |
 |---|---|---|
+| `pre-agent.sh` | PreToolUse(Agent) | **Blocks Explore subagent** — hooks don't fire inside subagents |
 | `pre-read.sh` | PreToolUse(Read) | Intercepts large files — auto-summarizes before Claude reads |
 | `on-read.sh` | PostToolUse(Read) | Indexes symbols + code blocks into DB |
 | `on-grep.sh` | PostToolUse(Grep) | Indexes files matched by grep into DB |

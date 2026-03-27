@@ -1853,6 +1853,15 @@ def _install_claude_code_hooks(force: bool) -> None:
         ],
         "PreToolUse": [
             {{
+                "matcher": "Agent",
+                "hooks": [
+                    {{
+                        "type": "command",
+                        "command": ".claude/hooks/pre-agent.sh"
+                    }}
+                ]
+            }},
+            {{
                 "matcher": "Read",
                 "hooks": [
                     {{
@@ -2003,6 +2012,32 @@ fi
 exit 0
 """
 
+    # --- pre-agent.sh: block Explore subagent before it launches ---
+    pre_agent = f"""#!/bin/sh
+# PreToolUse(Agent) — fires before any Agent tool call, can block via exit 2.
+# Explore subagent bypasses agora-code hooks entirely (hooks don't fire inside
+# subagents), so we block it here. Non-Explore subagents pass through.
+INPUT=$(cat)
+
+SUBAGENT_TYPE=$(printf '%s' "$INPUT" | python3 -c "
+import sys, json
+try:
+    d = json.loads(sys.stdin.read())
+    print(d.get('tool_input', {{}}).get('subagent_type', ''))
+except Exception:
+    print('')
+" 2>/dev/null)
+
+if [ "$SUBAGENT_TYPE" = "Explore" ]; then
+    printf 'agora-code: BLOCKED — Explore subagent bypasses hooks (pre-read, on-read, etc.).\\n' >&2
+    printf 'Use Read/Grep/Glob directly in the main session.\\n' >&2
+    printf 'Rule: run `agora-code summarize <file>` before reading any file >50 lines.\\n' >&2
+    exit 2
+fi
+
+exit 0
+"""
+
     # --- pre-read.sh: summarize large files before Claude reads them ---
     pre_read = f"""#!/bin/sh
 INPUT=$(cat)
@@ -2042,28 +2077,22 @@ exit 0
 """
 
     on_subagent = f"""#!/bin/sh
-INPUT=$(cat)
-
-# Block Explore subagent — it bypasses agora-code hooks (pre-read, on-read, etc.)
-# All file exploration must go through Read/Grep/Glob in the main session.
-IS_EXPLORE=$(printf '%s' "$INPUT" | python3 -c "
-import sys, json
-try:
-    d = json.loads(sys.stdin.read())
-    t = str(d.get('subagent_type', d.get('type', d.get('agent_type', '')))).lower()
-    print('yes' if 'explore' in t else 'no')
-except Exception:
-    print('no')
-" 2>/dev/null)
-
-if [ "$IS_EXPLORE" = "yes" ]; then
-    printf 'agora-code: Explore subagent blocked. Use Read/Grep/Glob directly in the main session so hooks fire and files get indexed.\\n'
-    exit 1
-fi
-
+# SubagentStart — inject agora-code session context into the subagent.
+# Cannot block (SubagentStart is observation-only); blocking is handled by
+# pre-agent.sh at PreToolUse(Agent). Context injection requires the
+# hookSpecificOutput JSON format — plain stdout is ignored by SubagentStart.
 CONTEXT=$({agora_bin} inject --quiet --level summary 2>/dev/null)
 if [ -n "$CONTEXT" ]; then
-    printf '[agora-code: parent session context]\\n%s\\n' "$CONTEXT"
+    printf '%s' "$CONTEXT" | python3 -c "
+import sys, json
+context = sys.stdin.read()
+print(json.dumps({{
+    'hookSpecificOutput': {{
+        'hookEventName': 'SubagentStart',
+        'additionalContext': '[agora-code: parent session context]\\n' + context
+    }}
+}}))
+" 2>/dev/null
 fi
 exit 0
 """
@@ -2384,6 +2413,7 @@ exit 0
         "on-subagent.sh": on_subagent,
         "on-tool-failure.sh": on_tool_failure,
         "pre-read.sh": pre_read,
+        "pre-agent.sh": pre_agent,
     }
     for name, content in scripts.items():
         p = hooks_dir / name
