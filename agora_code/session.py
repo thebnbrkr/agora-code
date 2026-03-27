@@ -717,7 +717,15 @@ def _build_recalled_context(project_id: Optional[str] = None) -> Optional[str]:
                     lr.get("confidence") or "confirmed", ""
                 )
                 sha_tag = f" [{lr['commit_sha'][:7]}]" if lr.get("commit_sha") else ""
-                section.append(f"  {icon}{conf}{sha_tag} {(lr.get('finding') or '')[:120]}")
+                ev = (lr.get('evidence') or '').strip()[:80]
+                _files = lr.get('files') or []
+                if isinstance(_files, str):
+                    import json as _j
+                    try: _files = _j.loads(_files)
+                    except Exception: _files = []
+                file_tag = f"  [{_files[0].split('/')[-1]}]" if _files else ""
+                line = ev if ev else (lr.get('finding') or '')[:120]
+                section.append(f"  {icon}{conf}{sha_tag} {line}{file_tag}")
             parts.append("\n".join(section))
 
             # Mark these learnings as injected
@@ -755,8 +763,7 @@ def _build_recalled_context(project_id: Optional[str] = None) -> Optional[str]:
                         clean_note = note
                         import re as _re
                         clean_note = _re.sub(r'^[^\s:]+[/\\][^\s:]*:\s*', '', clean_note, count=1)
-                        section.append(f"  {fp}")
-                        section.append(f"    {clean_note[:120]}")
+                        section.append(f"  {fp}  {clean_note[:100]}")
                     else:
                         section.append(f"  {fp}  (no change note yet)")
                 parts.append("\n".join(section))

@@ -983,21 +983,26 @@ def recall(query, limit):
     vs = get_store()
     project_id = _get_project_id()
 
+    _SYSTEM_TAGS = ()
+
+    def _filter_system(rows):
+        return [r for r in rows if not any(t in (r.get("tags") or []) for t in _SYSTEM_TAGS)]
+
     if not query:
         # No query — show most recent learnings
-        results = vs.search_learnings_keyword("", k=limit, project_id=project_id)
+        results = _filter_system(vs.search_learnings_keyword("", k=limit * 2, project_id=project_id))[:limit]
         mode = "recent"
     else:
         embed = get_query_embedding(query)
         if embed:
-            results = vs.search_learnings_semantic(embed, k=limit, project_id=project_id)
+            results = _filter_system(vs.search_learnings_semantic(embed, k=limit * 2, project_id=project_id))[:limit]
             mode = "semantic"
         else:
             results = []
             mode = None
 
         if not results:
-            results = vs.search_learnings_keyword(query, k=limit, project_id=project_id)
+            results = _filter_system(vs.search_learnings_keyword(query, k=limit * 2, project_id=project_id))[:limit]
             mode = "keyword"
 
     if not results:
