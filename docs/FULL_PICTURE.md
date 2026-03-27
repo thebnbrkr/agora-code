@@ -299,4 +299,3 @@ Kept here as a reminder to verify before claiming.
 | "file_changes only stores a summary, not raw diff" | file_changes has BOTH diff_summary (LLM/regex summary) AND diff_snippet (raw +/- lines from git diff) | PRAGMA table_info(file_changes) |
 | "store_learning always inserts a new row" | store_learning checks (project_id, commit_sha, finding) first — returns existing id if exact duplicate | Read vector_store.py store_learning |
 | "inject LEARNINGS shows the finding (diff stat)" | inject now shows evidence (commit message) as primary line — more signal, fewer tokens | Read session.py _build_recalled_context |
-test line
