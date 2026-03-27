@@ -717,7 +717,7 @@ def _build_recalled_context(project_id: Optional[str] = None) -> Optional[str]:
                     lr.get("confidence") or "confirmed", ""
                 )
                 sha_tag = f" [{lr['commit_sha'][:7]}]" if lr.get("commit_sha") else ""
-                ev = (lr.get('evidence') or '').strip()[:80]
+                ev = (lr.get('evidence') or '').strip()[:200]
                 _files = lr.get('files') or []
                 if isinstance(_files, str):
                     import json as _j
