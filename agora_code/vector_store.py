@@ -631,16 +631,32 @@ class VectorStore:
         """, (project_id, limit)).fetchall()
         return [dict(r) for r in rows]
 
-    def get_file_history(self, file_path: str, limit: int = 20) -> List[Dict]:
+    def get_file_history(
+        self,
+        file_path: str,
+        limit: int = 20,
+        project_id: Optional[str] = None,
+    ) -> List[Dict]:
         """Return summarized change history for a specific file, newest first."""
-        rows = self._conn_().execute("""
-            SELECT id, file_path, diff_summary, commit_sha, recorded_at_commit_sha,
-                   status, session_id, agent_id AS author, branch, timestamp
-            FROM file_changes
-            WHERE file_path = ?
-            ORDER BY timestamp DESC
-            LIMIT ?
-        """, (file_path, limit)).fetchall()
+        if project_id:
+            rows = self._conn_().execute("""
+                SELECT id, file_path, diff_summary, commit_sha, recorded_at_commit_sha,
+                       status, session_id, agent_id AS author, branch, timestamp
+                FROM file_changes
+                WHERE file_path = ?
+                  AND project_id = ?
+                ORDER BY timestamp DESC
+                LIMIT ?
+            """, (file_path, project_id, limit)).fetchall()
+        else:
+            rows = self._conn_().execute("""
+                SELECT id, file_path, diff_summary, commit_sha, recorded_at_commit_sha,
+                       status, session_id, agent_id AS author, branch, timestamp
+                FROM file_changes
+                WHERE file_path = ?
+                ORDER BY timestamp DESC
+                LIMIT ?
+            """, (file_path, limit)).fetchall()
         return [dict(r) for r in rows]
 
     # ----------------------------------------------------------------------- #
@@ -1064,7 +1080,7 @@ class VectorStore:
         filters = ["cl.commit_sha = ?"]
         params: list = [commit_sha]
         if project_id:
-            filters.append("(l.project_id = ? OR l.project_id IS NULL)")
+            filters.append("l.project_id = ?")
             params.append(project_id)
         where = " AND ".join(filters)
         rows = self._conn_().execute(f"""
@@ -1090,7 +1106,7 @@ class VectorStore:
         params: list = list(commit_shas)
         extra = ""
         if project_id:
-            extra = "AND (l.project_id = ? OR l.project_id IS NULL)"
+            extra = "AND l.project_id = ?"
             params.append(project_id)
         rows = self._conn_().execute(f"""
             SELECT l.id, l.finding, l.evidence, l.confidence, l.tags,
@@ -1127,7 +1143,7 @@ class VectorStore:
             SELECT id, file_path, diff_summary, commit_sha, timestamp
             FROM file_changes
             WHERE file_path LIKE ? AND commit_sha = ?
-              AND (project_id = ? OR project_id IS NULL)
+              AND project_id = ?
             ORDER BY timestamp ASC
         """, (like_pat, commit_sha, project_id)).fetchall()
         return [dict(r) for r in rows]
@@ -1179,7 +1195,7 @@ class VectorStore:
         params: list = [self._pack(query_embedding), k * 2, namespace]
 
         if project_id:
-            filters.append("(l.project_id = ? OR l.project_id IS NULL)")
+            filters.append("l.project_id = ?")
             params.append(project_id)
         if branch:
             filters.append("(l.branch = ? OR l.branch IS NULL)")
@@ -1227,7 +1243,7 @@ class VectorStore:
         filters = ["(namespace = ? OR namespace IS NULL)"]
         base_params: list = [namespace]
         if project_id:
-            filters.append("(project_id = ? OR project_id IS NULL)")
+            filters.append("project_id = ?")
             base_params.append(project_id)
         if branch:
             filters.append("(branch = ? OR branch IS NULL)")
