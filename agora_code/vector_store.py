@@ -1024,6 +1024,14 @@ class VectorStore:
     ) -> str:
         """Store a learning and (optionally) its embedding. Returns learning ID."""
         conn = self._conn_()
+        # Reject exact duplicates — same project, commit, and finding
+        if project_id and commit_sha and finding:
+            existing = conn.execute(
+                "SELECT id FROM learnings WHERE project_id=? AND commit_sha=? AND finding=? LIMIT 1",
+                (project_id, commit_sha, finding)
+            ).fetchone()
+            if existing:
+                return existing["id"]
         lid = str(uuid.uuid4())
         now = _now()
         tags_json = json.dumps(tags or [])
