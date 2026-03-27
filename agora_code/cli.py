@@ -1269,11 +1269,18 @@ def _summarize_diff(diff: str, file_path: str) -> str:
         parts.append(f"removed {', '.join(del_fns[:2])}()")
 
     # Import changes
+    def _imp_name(line):
+        # "from foo import Bar" → "Bar"; "import foo.bar" → "foo.bar"
+        if " import " in line:
+            return line.split(" import ", 1)[1].strip().split(",")[0].strip()
+        parts_ = line.split()
+        return parts_[1] if len(parts_) >= 2 else line
+
     if new_imports:
-        import_names = [i.split()[-1] for i in new_imports[:2]]
+        import_names = [_imp_name(i) for i in new_imports[:2]]
         parts.append(f"imported {', '.join(import_names)}")
     if del_imports:
-        import_names = [i.split()[-1] for i in del_imports[:2]]
+        import_names = [_imp_name(i) for i in del_imports[:2]]
         parts.append(f"removed import {', '.join(import_names)}")
 
     # Fallback: show a snippet of the most significant added line
@@ -1305,7 +1312,8 @@ def file_history(file_path, limit):
     """
     from agora_code.vector_store import get_store
 
-    history = get_store().get_file_history(file_path, limit=limit)
+    from agora_code.session import _get_project_id
+    history = get_store().get_file_history(file_path, limit=limit, project_id=_get_project_id())
     if not history:
         _echo(f"📭 No tracked changes for '{file_path}'.")
         _echo("   Changes are tracked automatically via git post-commit hook.")
@@ -1386,7 +1394,7 @@ def learn_from_commit(sha, quiet):
         rows = store.get_file_changes_for_commit(fp, sha, project_id=project_id)
         if not rows:
             # fallback: most recent note for this file regardless of SHA
-            history = store.get_file_history(fp, limit=1)
+            history = store.get_file_history(fp, limit=1, project_id=project_id)
             rows = history if history else []
 
         for row in rows:
@@ -1623,7 +1631,7 @@ def notes(file_path, limit):
     project_id = _get_project_id()
 
     if file_path:
-        rows = store.get_file_history(file_path, limit=limit)
+        rows = store.get_file_history(file_path, limit=limit, project_id=project_id)
     else:
         rows = store.get_recent_file_changes_for_project(project_id, limit=limit)
 
@@ -1970,6 +1978,11 @@ def _install_claude_code_hooks(force: bool) -> None:
 
     # --- on-prompt.sh: auto-set goal + recall relevant learnings on each prompt ---
     on_prompt = f"""#!/bin/sh
+STAMP="/tmp/agora_last_hook_$(basename "$0")"
+NOW=$(date +%s)
+LAST=$(cat "$STAMP" 2>/dev/null || echo 0)
+if [ $((NOW - LAST)) -lt 2 ]; then exit 0; fi
+echo "$NOW" > "$STAMP"
 INPUT=$(cat)
 
 PROMPT=$(printf '%s' "$INPUT" | python3 -c "
