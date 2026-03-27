@@ -24,6 +24,15 @@
         ],
         "PreToolUse": [
             {
+                "matcher": "Agent",
+                "hooks": [
+                    {
+                        "type": "command",
+                        "command": ".claude/hooks/pre-agent.sh"
+                    }
+                ]
+            },
+            {
                 "matcher": "Read",
                 "hooks": [
                     {

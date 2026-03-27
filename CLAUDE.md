@@ -1,5 +1,14 @@
 # agora-code — Claude Code Instructions
 
+## HARD RULES — enforced by hooks, do not bypass
+
+- **NEVER use the Explore subagent** — it bypasses agora-code hooks. Use `Read`/`Grep`/`Glob` directly. The `PreToolUse(Agent)` hook will block it.
+- **NEVER call `Read` on a file >50 lines without running `agora-code summarize <file>` first** — the `pre-read.sh` hook enforces this too.
+
+These are mechanical constraints, not preferences.
+
+---
+
 This project provides persistent memory and API discovery for AI agents.
 
 ## How it works

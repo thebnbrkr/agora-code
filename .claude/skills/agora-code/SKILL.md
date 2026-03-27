@@ -22,6 +22,7 @@ agora-code gives you persistent memory across sessions. Hooks handle most things
 
 | Hook | Event | Does |
 |---|---|---|
+| `pre-agent.sh` | PreToolUse(Agent) | **Blocks Explore subagent** — exit 2 prevents launch |
 | `pre-read.sh` | PreToolUse(Read) | Intercepts large files — auto-summarizes before Claude reads |
 | `on-read.sh` | PostToolUse(Read) | Indexes symbols + code blocks into DB |
 | `on-grep.sh` | PostToolUse(Grep) | Indexes files matched by grep into DB |
