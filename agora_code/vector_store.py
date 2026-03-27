@@ -1152,6 +1152,7 @@ class VectorStore:
             FROM file_changes
             WHERE file_path LIKE ? AND commit_sha = ?
               AND project_id = ?
+            GROUP BY substr(diff_summary, 1, 60)
             ORDER BY timestamp ASC
         """, (like_pat, commit_sha, project_id)).fetchall()
         return [dict(r) for r in rows]
