@@ -263,3 +263,75 @@ def test_get_git_branch_in_actual_repo():
     result = _get_git_branch()
     assert result is not None
     assert len(result) > 0
+
+
+# --------------------------------------------------------------------------- #
+#  inject format — _build_recalled_context                                    #
+# --------------------------------------------------------------------------- #
+
+def _make_store_with_learning(tmp_path, finding, evidence, tags, commit_sha="abc1234", files=None):
+    """Create an in-memory VectorStore with one learning row."""
+    import json
+    from agora_code.vector_store import VectorStore
+    db_path = tmp_path / "memory.db"
+    vs = VectorStore(str(db_path))
+    vs.store_learning(
+        finding=finding,
+        evidence=evidence,
+        confidence="confirmed",
+        tags=tags,
+        type="finding",
+        branch="main",
+        files=files or ["agora_code/vector_store.py"],
+        project_id="test-project",
+        session_id=None,
+        commit_sha=commit_sha,
+    )
+    return vs
+
+
+def test_inject_learning_shows_evidence_not_finding(tmp_path, monkeypatch):
+    """inject LEARNINGS line should show evidence (commit message), not the mechanical diff stat."""
+    from agora_code.session import _build_recalled_context
+    import agora_code.session as sess_mod
+
+    vs = _make_store_with_learning(
+        tmp_path,
+        finding="modified get_file_history() (+30/-14 lines) #kept",
+        evidence="commit abc1234: fix: strict project_id scoping",
+        tags=["commit", "change-note"],
+        commit_sha="abc1234",
+    )
+
+    monkeypatch.setattr(sess_mod, "_GLOBAL_DIR", tmp_path / ".agora-code-global")
+    monkeypatch.setattr("agora_code.session.get_store", lambda: vs)
+    monkeypatch.setattr("agora_code.session._get_project_id", lambda: "test-project")
+
+    ctx = _build_recalled_context("test-project")
+    assert ctx is not None
+    assert "fix: strict project_id scoping" in ctx
+    # mechanical diff stat should NOT be the primary line
+    assert "modified get_file_history() (+30/-14 lines)" not in ctx
+
+
+def test_inject_learning_single_line_per_entry(tmp_path, monkeypatch):
+    """Each learning should produce exactly one line in the LEARNINGS block."""
+    from agora_code.session import _build_recalled_context
+    import agora_code.session as sess_mod
+
+    vs = _make_store_with_learning(
+        tmp_path,
+        finding="modified foo() (+5/-2 lines) #kept",
+        evidence="commit abc1234: feat: add foo",
+        tags=["commit", "change-note"],
+        commit_sha="abc1234",
+    )
+
+    monkeypatch.setattr(sess_mod, "_GLOBAL_DIR", tmp_path / ".agora-code-global")
+    monkeypatch.setattr("agora_code.session.get_store", lambda: vs)
+    monkeypatch.setattr("agora_code.session._get_project_id", lambda: "test-project")
+
+    ctx = _build_recalled_context("test-project")
+    assert ctx is not None
+    lines = [l for l in ctx.splitlines() if "feat: add foo" in l]
+    assert len(lines) == 1
