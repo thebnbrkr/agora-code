@@ -1409,9 +1409,13 @@ def learn_from_commit(sha, quiet):
             if not clean or (clean.startswith("modified ") and len(clean) < 20):
                 continue
             finding = f"{clean}  [{fp.split('/')[-1]}]"
+            snippet = (row.get("diff_snippet") or "").strip()[:300]
+            evidence = f"commit {sha}: {commit_message[:80]}"
+            if snippet:
+                evidence = f"{evidence}\n{snippet}"
             store.store_learning(
                 finding=finding,
-                evidence=f"commit {sha}: {commit_message[:80]}",
+                evidence=evidence,
                 confidence="confirmed",
                 tags=["commit", "change-note"],
                 type="finding",

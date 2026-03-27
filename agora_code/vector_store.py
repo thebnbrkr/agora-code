@@ -1171,17 +1171,16 @@ class VectorStore:
         commit_sha: str,
         project_id: Optional[str] = None,
     ) -> List[Dict]:
-        """Return the final #kept file_changes row for a file tagged with a specific commit SHA."""
+        """Return all #kept file_changes rows for a file tagged with a specific commit SHA."""
         like_pat = f"%{file_path}"
         rows = self._conn_().execute("""
-            SELECT id, file_path, diff_summary, commit_sha, timestamp
+            SELECT id, file_path, diff_summary, diff_snippet, commit_sha, timestamp
             FROM file_changes
             WHERE file_path LIKE ? AND commit_sha = ?
               AND project_id = ?
               AND diff_summary LIKE '%#kept%'
               AND diff_summary NOT LIKE '%#not_kept%'
-            ORDER BY timestamp DESC
-            LIMIT 1
+            ORDER BY timestamp ASC
         """, (like_pat, commit_sha, project_id)).fetchall()
         return [dict(r) for r in rows]
 
