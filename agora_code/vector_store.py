@@ -415,6 +415,32 @@ class VectorStore:
         except Exception:
             pass
 
+        # Safe migration: deduplicate learnings then add unique constraint
+        # Keep the earliest row per (project_id, commit_sha, finding) group
+        try:
+            conn.execute("""
+                DELETE FROM learnings
+                WHERE rowid NOT IN (
+                    SELECT MIN(rowid) FROM learnings
+                    WHERE project_id IS NOT NULL
+                      AND commit_sha IS NOT NULL
+                      AND finding IS NOT NULL
+                    GROUP BY project_id, commit_sha, finding
+                )
+                AND project_id IS NOT NULL
+                AND commit_sha IS NOT NULL
+                AND finding IS NOT NULL
+            """)
+            conn.execute("""
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_learnings_dedup
+                ON learnings(project_id, commit_sha, finding)
+                WHERE project_id IS NOT NULL
+                  AND commit_sha IS NOT NULL
+                  AND finding IS NOT NULL
+            """)
+        except Exception:
+            pass
+
         conn.commit()
 
     # ----------------------------------------------------------------------- #
@@ -1024,21 +1050,13 @@ class VectorStore:
     ) -> str:
         """Store a learning and (optionally) its embedding. Returns learning ID."""
         conn = self._conn_()
-        # Reject exact duplicates — same project, commit, and finding
-        if project_id and commit_sha and finding:
-            existing = conn.execute(
-                "SELECT id FROM learnings WHERE project_id=? AND commit_sha=? AND finding=? LIMIT 1",
-                (project_id, commit_sha, finding)
-            ).fetchone()
-            if existing:
-                return existing["id"]
         lid = str(uuid.uuid4())
         now = _now()
         tags_json = json.dumps(tags or [])
         files_json = json.dumps(files or [])
 
-        conn.execute("""
-            INSERT INTO learnings
+        result = conn.execute("""
+            INSERT OR IGNORE INTO learnings
                 (id, session_id, timestamp, api_base_url, endpoint_method,
                  endpoint_path, finding, evidence, confidence, tags,
                  branch, files, namespace, project_id, type, commit_sha)
@@ -1048,6 +1066,14 @@ class VectorStore:
             endpoint_path, finding, evidence, confidence, tags_json,
             branch, files_json, namespace, project_id, type, commit_sha,
         ))
+
+        if result.rowcount == 0:
+            # Duplicate — unique constraint fired, return existing id
+            existing = conn.execute(
+                "SELECT id FROM learnings WHERE project_id=? AND commit_sha=? AND finding=? LIMIT 1",
+                (project_id, commit_sha, finding)
+            ).fetchone()
+            return existing["id"] if existing else lid
 
         if embedding and self._vec_available:
             dim = len(embedding)
