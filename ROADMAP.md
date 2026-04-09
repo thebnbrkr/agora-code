@@ -21,7 +21,6 @@ Host the SQLite database (or a sync layer on top of it) so that session context,
 
 ---
 
-## UI
 
 **Local memory viewer**
 A localhost UI for exploring what's stored — sessions, learnings, file change history, symbol index. Visualize code changes over time, browse stored learnings, and do everything the CLI listing commands do but interactively. The worker API is already at localhost so the surface area is small.

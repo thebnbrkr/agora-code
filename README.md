@@ -4,6 +4,8 @@ Persistent memory and context reduction for AI coding agents. Survives context w
 
 ---
 
+![agora-code screenshot](assets/screenshot.png)
+
 ## Install
 
 > **Prerequisites:** Python 3.10+ and pip. *(Fully tested on macOS.)*
