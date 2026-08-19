@@ -1,5 +1,7 @@
 #!/bin/sh
-# PreToolUse(Agent) — fires before any Agent tool call, can block (exit 2)
+# PreToolUse(Agent) — fires before any Agent tool call, can block via exit 2.
+# Explore subagent bypasses agora-code hooks entirely (hooks don't fire inside
+# subagents), so we block it here. Non-Explore subagents pass through.
 INPUT=$(cat)
 
 SUBAGENT_TYPE=$(printf '%s' "$INPUT" | python3 -c "

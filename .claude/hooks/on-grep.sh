@@ -1,9 +1,4 @@
 #!/bin/sh
-STAMP="/tmp/agora_last_hook_$(basename "$0")"
-NOW=$(date +%s)
-LAST=$(cat "$STAMP" 2>/dev/null || echo 0)
-if [ $((NOW - LAST)) -lt 2 ]; then exit 0; fi
-echo "$NOW" > "$STAMP"
 INPUT=$(cat)
 TMPFILE=$(mktemp /tmp/agora_hook_XXXXXX)
 printf '%s' "$INPUT" > "$TMPFILE"
@@ -22,6 +17,7 @@ response = str(hook.get('tool_response', ''))
 CODE_EXTS = {'.py','.js','.ts','.jsx','.tsx','.go','.rs','.java','.c','.cpp','.cs','.rb','.swift','.kt','.php','.sh'}
 seen = set()
 for line in response.splitlines():
+    # files_with_matches mode: just a path; content mode: path:linenum:text
     candidate = line.split(':')[0].strip()
     if candidate and candidate not in seen and os.path.isfile(candidate):
         if Path(candidate).suffix.lower() in CODE_EXTS:
