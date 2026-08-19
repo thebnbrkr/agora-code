@@ -1,5 +1,5 @@
 #!/bin/sh
-# Cursor afterFileEdit hook — track the edited file and refresh route cache.
+# Cursor afterFileEdit hook — track the edited file.
 # Cursor sends JSON via stdin with a "filePath" field, e.g.:
 #   {"filePath": "agora_code/auth.py", ...}
 # We extract it with python3 (always available alongside agora-code).
@@ -14,9 +14,6 @@ try:
 except Exception:
     print('')
 " 2>/dev/null)
-
-# Refresh route cache quietly
-agora-code scan . --cache --quiet 2>/dev/null || true
 
 # Track diff + re-index AST so DB stays in sync with file content
 if [ -n "$FILE_PATH" ]; then

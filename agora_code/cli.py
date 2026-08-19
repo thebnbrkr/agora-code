@@ -2,10 +2,10 @@
 cli.py — agora-code command line interface.
 
 Commands:
-    agora-code scan ./my-api         — discover all routes, print table
-    agora-code serve ./my-api        — start MCP server
-    agora-code stats ./my-api        — show API call stats from memory
-    agora-code auth ./my-api         — configure auth interactively
+    agora-code inject               — print compressed session context
+    agora-code summarize <file>     — AST summary of a file (token-efficient)
+    agora-code checkpoint           — save session state mid-task
+    agora-code memory-server        — start the memory MCP server
 
 Requires: pip install agora-code  (click is a dependency)
 Rich output via 'rich' if installed, plain fallback otherwise.

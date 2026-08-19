@@ -31,7 +31,6 @@ except Exception:
         if [ -n "$FILE_PATH" ]; then
             agora-code track-diff "$FILE_PATH" 2>/dev/null || true
         fi
-        agora-code scan . --cache --quiet 2>/dev/null || true
         ;;
 esac
 

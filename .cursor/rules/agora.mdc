@@ -1,5 +1,5 @@
 ---
-description: agora-code memory and API tools — when and how to use them
+description: agora-code memory tools — when and how to use them
 globs: ["**/*"]
 alwaysApply: true
 ---
@@ -24,9 +24,8 @@ alwaysApply: true
 | `agora-code checkpoint --goal "..."` | After completing a meaningful step |
 | `agora-code status` | Current session + DB path and row counts |
 | `agora-code memory` | Dump all DB (sessions, learnings, snapshots, symbols); add `--verbose` for AST/code blocks |
-| `agora-code list-sessions` / `list-learnings` / `list-snapshots` / `list-symbols` / `list-file-changes` / `list-api-calls` | View each DB table without SQL |
+| `agora-code list-sessions` / `list-learnings` / `list-snapshots` / `list-symbols` / `list-file-changes` | View each DB table without SQL |
 | `agora-code index <file>` | Re-index file into DB (hooks do this on edit; use if needed manually) |
-| `agora-code scan .` | To discover API routes in the codebase |
 
 ## Session lifecycle
 
