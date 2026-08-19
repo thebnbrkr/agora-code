@@ -513,7 +513,6 @@ async def _handle_get_memory_stats(params: dict) -> str:
         f"Memory stats:\n"
         f"  Sessions archived: {stats.get('sessions', 0)}\n"
         f"  Learnings stored:  {stats.get('learnings', 0)}\n"
-        f"  API calls logged:  {stats.get('api_calls', 0)}\n"
         f"  Search mode:       {search_mode}\n"
         f"  DB location:       {store.db_path}"
     )

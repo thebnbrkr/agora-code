@@ -249,7 +249,6 @@ async def test_get_memory_stats_returns_keys():
     text = resp["result"]["content"][0]["text"]
     assert "Sessions" in text or "sessions" in text.lower()
     assert "Learnings" in text or "learnings" in text.lower()
-    assert "API calls" in text or "api_calls" in text.lower()
 
 
 @pytest.mark.asyncio

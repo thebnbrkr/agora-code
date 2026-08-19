@@ -10,7 +10,7 @@ readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "Apache-2.0" }
 authors = [{ name = "Agora" }]
-keywords = ["ai", "agent", "api", "mcp", "openapi", "codebase"]
+keywords = ["ai", "agent", "mcp", "codebase", "memory"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Programming Language :: Python :: 3",
@@ -26,12 +26,13 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# Tier 3 extractors
+# LLM providers — used for semantic embeddings (embeddings.py) and for
+# generating change-note summaries (cli.py's track-diff) when no coding
+# agent is in the loop (see llm_provider.py). Not required for local-first
+# use: FTS5/BM25 keyword search and regex-based change notes work with none
+# of these installed.
 openai  = ["openai>=1.0"]
 gemini  = ["google-generativeai>=0.8"]
-
-# Agent LLM backend
-llm     = ["openai>=1.0"]
 
 # Vector similarity search in SQLite (semantic recall, learning search)
 # Falls back to FTS5 keyword search when not installed.
@@ -40,11 +41,6 @@ vec     = ["sqlite-vec>=0.1", "pysqlite3-binary>=0.5; sys_platform != 'linux'"]
 # Local embeddings — fully offline, no API key needed
 # Uses bge-small-en-v1.5 by default (~130MB). Set LOCAL_EMBEDDING_MODEL to override.
 local   = ["sentence-transformers>=2.2"]
-
-# --- Enterprise edition ---
-enterprise = [
-    "supabase>=2.0",
-]
 
 # Dev / test
 dev = [
@@ -56,7 +52,7 @@ dev = [
 
 # Everything
 all = [
-    "agora-code[openai,gemini,llm,vec,local,enterprise,dev]",
+    "agora-code[openai,gemini,vec,local,dev]",
 ]
 
 [project.scripts]

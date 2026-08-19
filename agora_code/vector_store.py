@@ -1,10 +1,10 @@
 """
 vector_store.py — SQLite + sqlite-vec + FTS5 storage for agora-code.
 
-Stores three types of data, all in one local DB:
-  - sessions      : your API testing session state (replaces any YAML handoff)
-  - learnings     : permanent "this API does X" knowledge base
-  - api_calls     : per-call HTTP interaction log for pattern detection
+Stores your coding session state, all in one local DB:
+  - sessions      : goal/hypothesis/checkpoint state per coding session
+  - learnings     : permanent findings knowledge base
+  - file_changes, file_snapshots, symbol_notes: git diff + AST/symbol cache
 
 DB path (in priority order):
   1. Explicit path passed to VectorStore(db_path=...)
@@ -358,30 +358,6 @@ class VectorStore:
                 VALUES ('delete', old.rowid, old.id, old.file_path, old.symbol_name,
                         COALESCE(old.signature, ''), COALESCE(old.note, ''));
             END
-        """)
-
-        # ── API interactions ──────────────────────────────────────────────────
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS api_calls (
-                id              TEXT PRIMARY KEY,
-                session_id      TEXT,
-                timestamp       TEXT NOT NULL,
-                method          TEXT,
-                path            TEXT,
-                request_params  TEXT,
-                response_status INTEGER,
-                latency_ms      REAL,
-                success         INTEGER,
-                error_message   TEXT
-            )
-        """)
-        conn.execute("""
-            CREATE INDEX IF NOT EXISTS idx_calls_path
-            ON api_calls(path, method, success)
-        """)
-        conn.execute("""
-            CREATE INDEX IF NOT EXISTS idx_calls_session
-            ON api_calls(session_id, timestamp)
         """)
 
         # ── Commit learnings junction ────────────────────────────────────────
@@ -1338,121 +1314,14 @@ class VectorStore:
             return [_learning_row(r) for r in rows]
 
     # ----------------------------------------------------------------------- #
-    #  API call log                                                             #
-    # ----------------------------------------------------------------------- #
-
-    def log_api_call(
-        self,
-        *,
-        session_id: Optional[str] = None,
-        method: str,
-        path: str,
-        request_params: Optional[dict] = None,
-        response_status: int,
-        latency_ms: float = 0.0,
-        success: bool,
-        error_message: Optional[str] = None,
-    ) -> None:
-        """Append one API call to the interaction log."""
-        conn = self._conn_()
-        conn.execute("""
-            INSERT INTO api_calls
-                (id, session_id, timestamp, method, path,
-                 request_params, response_status, latency_ms, success, error_message)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (
-            str(uuid.uuid4()),
-            session_id,
-            _now(),
-            method.upper(),
-            path,
-            json.dumps(request_params or {}),
-            response_status,
-            latency_ms,
-            1 if success else 0,
-            error_message,
-        ))
-        conn.commit()
-
-    def get_endpoint_stats(self, method: str, path: str) -> Dict:
-        """Aggregate stats for one endpoint over time."""
-        row = self._conn_().execute("""
-            SELECT
-                COUNT(*)                                        AS total,
-                SUM(success)                                    AS successes,
-                AVG(latency_ms)                                 AS avg_latency,
-                MAX(timestamp)                                  AS last_called,
-                MAX(CASE WHEN success=0 THEN error_message END) AS last_error
-            FROM api_calls
-            WHERE method = ? AND path = ?
-        """, (method.upper(), path)).fetchone()
-
-        if not row or row["total"] == 0:
-            return {"total": 0, "success_rate": None, "avg_latency_ms": None}
-
-        total = row["total"]
-        succ  = row["successes"] or 0
-        return {
-            "total":        total,
-            "success_rate": round(succ / total, 3),
-            "avg_latency_ms": round(row["avg_latency"] or 0, 1),
-            "last_called":  row["last_called"],
-            "last_error":   row["last_error"],
-        }
-
-    def get_failure_patterns(
-        self,
-        path: str,
-        min_occurrences: int = 3,
-        window_hours: float = 168.0,  # 7 days
-    ) -> List[Dict]:
-        """
-        Find parameter combos that repeatedly fail for this endpoint.
-        Returns suggestions for the MCP tool call context.
-        """
-        rows = self._conn_().execute("""
-            SELECT request_params, COUNT(*) as n,
-                   AVG(CAST(success AS FLOAT)) as sr
-            FROM api_calls
-            WHERE path = ?
-              AND timestamp > datetime('now', ?)
-            GROUP BY request_params
-            HAVING n >= ? AND sr < 0.3
-            ORDER BY n DESC
-            LIMIT 5
-        """, (path, f"-{window_hours} hours", min_occurrences)).fetchall()
-
-        return [
-            {
-                "params": json.loads(r["request_params"]),
-                "occurrences": r["n"],
-                "success_rate": round(r["sr"], 2),
-                "suggestion": "These params consistently fail — check your learnings.",
-            }
-            for r in rows
-        ]
-
-    # ----------------------------------------------------------------------- #
     #  Misc                                                                     #
     # ----------------------------------------------------------------------- #
-
-    def list_recent_api_calls(self, limit: int = 20) -> List[Dict]:
-        """Return recent API calls (method, path, status, latency), newest first."""
-        rows = self._conn_().execute("""
-            SELECT session_id, timestamp, method, path,
-                   response_status, latency_ms, success, error_message
-            FROM api_calls
-            ORDER BY timestamp DESC
-            LIMIT ?
-        """, (limit,)).fetchall()
-        return [dict(r) for r in rows]
 
     def get_stats(self) -> Dict:
         conn = self._conn_()
         return {
             "sessions":        conn.execute("SELECT COUNT(*) FROM sessions").fetchone()[0],
             "learnings":       conn.execute("SELECT COUNT(*) FROM learnings").fetchone()[0],
-            "api_calls":       conn.execute("SELECT COUNT(*) FROM api_calls").fetchone()[0],
             "file_snapshots":  conn.execute("SELECT COUNT(*) FROM file_snapshots").fetchone()[0],
             "symbol_notes":    conn.execute("SELECT COUNT(*) FROM symbol_notes").fetchone()[0],
             "vector_search":   self._vec_available,
