@@ -221,12 +221,6 @@ def test_checkpoint_quiet_exits_zero(tmp_path):
     assert result.returncode == 0
 
 
-def test_scan_cache_quiet_exits_zero():
-    """scan . --cache --quiet should exit 0 (uses cache if present, else scans)."""
-    result = _run_cli("scan", ".", "--cache", "--quiet")
-    assert result.returncode == 0
-
-
 def test_inject_without_quiet_still_works():
     """inject with no flags should work (silent no-op when no session)."""
     result = _run_cli("inject")
@@ -253,13 +247,6 @@ def test_inject_quiet_outputs_context_when_session_exists(tmp_path):
         "--quiet must not suppress context output; hooks rely on stdout. "
         f"Got stdout={result.stdout!r} stderr={result.stderr!r}"
     )
-
-
-def test_scan_quiet_suppresses_output():
-    """--quiet should produce no stdout when scan runs."""
-    result = _run_cli("scan", ".", "--quiet")
-    assert result.returncode == 0
-    assert result.stdout.strip() == ""
 
 
 # --------------------------------------------------------------------------- #

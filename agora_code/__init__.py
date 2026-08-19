@@ -1,18 +1,10 @@
 """
-agora-code: Scan any codebase. Turn it into an agent.
+agora-code: persistent session memory and symbol indexing for AI coding agents.
 
-Quick start:
-    from agora_code import scan
-    from agora_code.agent import MCPServer
-
-    catalog = await scan("./my-api")
-    server = MCPServer(catalog, base_url="http://localhost:8000")
-    await server.serve()   # stdio MCP server — plug into Claude Desktop / Cline
+Used as a CLI (`agora-code inject`, `agora-code summarize <file>`, ...) or as
+an MCP server (`agora-code memory-server`) — see README.md. Not typically
+imported as a library; the package is consumed through those two surfaces.
 """
 
-from agora_code.models import Route, Param, RouteCatalog
-from agora_code.scanner import scan
-from agora_code.agent import MCPServer, APICallNode
-
 __version__ = "0.2.3"
-__all__ = ["Route", "Param", "RouteCatalog", "scan", "MCPServer", "APICallNode"]
+__all__: list[str] = []
