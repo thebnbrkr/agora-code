@@ -602,7 +602,9 @@ def recall(query, limit):
     vs = get_store()
     project_id = _get_project_id()
 
-    _SYSTEM_TAGS = ()
+    # Machine-generated learnings that shouldn't clutter hand-curated recall
+    # results — mirrors the exclusions _build_recalled_context() applies.
+    _SYSTEM_TAGS = ("checkpoint", "conversation-summary", "tool-failure")
 
     def _filter_system(rows):
         return [r for r in rows if not any(t in (r.get("tags") or []) for t in _SYSTEM_TAGS)]
@@ -1094,7 +1096,10 @@ def show(json_out):
     project_id = _get_project_id()
     branch = _get_git_branch()
     session = load_session()
-    session_data = _json.loads(session.get("session_data") or "{}") if session else {}
+    # load_session() returns the flat session.json dict — decisions_made and
+    # next_steps are top-level keys ("session_data" nesting only exists in the
+    # SQLite sessions table row, a different object).
+    session_data = session or {}
 
     # ── Recent commits on branch ──────────────────────────────────────────────
     r = sp.run(
@@ -1681,17 +1686,30 @@ exit 0
 
     # --- pre-read.sh: summarize large files before Claude reads them ---
     pre_read = f"""#!/bin/sh
+# PreToolUse(Read) — intercept large-file reads, serve AST summary instead.
+# Claude Code nests tool args under "tool_input"; fall back to top-level
+# keys for harnesses that send a flat shape.
 INPUT=$(cat)
-FILE_PATH=$(printf '%s' "$INPUT" | python3 -c "
+PARSED=$(printf '%s' "$INPUT" | python3 -c "
 import sys, json
 try:
     d = json.loads(sys.stdin.read())
-    print(d.get('file_path') or d.get('path') or '')
+    ti = d.get('tool_input') or {{}}
+    if isinstance(ti, str):
+        ti = json.loads(ti)
+    path = ti.get('file_path') or ti.get('path') or d.get('file_path') or d.get('path') or ''
+    # Targeted read (offset/limit present) — the agent already knows where to
+    # look, likely from a prior summary. Let it through untouched.
+    targeted = ti.get('offset') is not None or ti.get('limit') is not None
+    print(json.dumps({{'path': path, 'targeted': targeted}}))
 except Exception:
-    print('')
+    print(json.dumps({{'path': '', 'targeted': False}}))
 " 2>/dev/null)
 
-if [ -z "$FILE_PATH" ]; then exit 0; fi
+FILE_PATH=$(printf '%s' "$PARSED" | python3 -c "import sys,json;print(json.loads(sys.stdin.read())['path'])" 2>/dev/null)
+TARGETED=$(printf '%s' "$PARSED" | python3 -c "import sys,json;print('yes' if json.loads(sys.stdin.read())['targeted'] else 'no')" 2>/dev/null)
+
+if [ -z "$FILE_PATH" ] || [ "$TARGETED" = "yes" ]; then exit 0; fi
 
 RESULT=$({agora_bin} summarize "$FILE_PATH" --json-output 2>/dev/null)
 if [ -z "$RESULT" ]; then exit 0; fi
@@ -1710,7 +1728,9 @@ import sys, json
 d = json.loads(sys.stdin.read())
 print(d.get('summary', ''))
 print()
-print(f'[Read blocked: file has {{d.get(\\\"original_lines\\\", 0)}} lines. Use the summary above — do NOT read this file in chunks.]')
+n = d.get('original_lines', 0)
+size = f'file has {{n}} lines' if n else 'large file'
+print(f'[Read blocked: {{size}}. Use the summary above, or Read with offset+limit for specific sections.]')
 " 2>/dev/null
     exit 2
 fi
@@ -2106,7 +2126,8 @@ exit 0
 @click.option("--max-tokens", default=500, help="Token budget for summary")
 @click.option("--json-output", "json_out", is_flag=True, default=False,
               help="Output JSON for hook consumption")
-@click.option("--threshold", default=50, help="Line threshold — files below this pass through")
+@click.option("--threshold", default=None, type=int,
+              help="Line threshold — files below this pass through (default: summarizer.FILE_SIZE_THRESHOLD)")
 def summarize(file_path, max_tokens, json_out, threshold):
     """Summarize a file's structure for token-efficient context injection.
 
@@ -2150,12 +2171,18 @@ def summarize(file_path, max_tokens, json_out, threshold):
         snapshot = store.get_file_snapshot(str(path), project_id=pid, branch=branch)
         if snapshot and snapshot.get("summary") and snapshot.get("commit_sha") == current_sha:
             summary = snapshot["summary"]
+            # Recover the line count from the summary's own header
+            # ("[agora-code summary of X — N lines]") so hook messages don't
+            # report "file has 0 lines" on cache hits.
+            import re as _re
+            m = _re.search(r"— (\d+) lines\]", summary)
+            cached_lines = int(m.group(1)) if m else 0
             if json_out:
                 click.echo(json.dumps({
                     "action": "summarize",
                     "parser": "cached",
                     "summary": summary,
-                    "original_lines": 0,
+                    "original_lines": cached_lines,
                     "original_tokens": 0,
                     "summary_tokens": _est_tokens(summary),
                 }))
@@ -2173,7 +2200,10 @@ def summarize(file_path, max_tokens, json_out, threshold):
             click.echo(json.dumps({"action": "allow", "reason": "unreadable"}))
         return
 
-    summary = summarize_file(str(file_path), content, max_tokens=max_tokens, threshold=threshold)
+    # Default to the summarizer's FILE_SIZE_THRESHOLD (single source of truth)
+    # so a CLI default can't silently override the configured constant.
+    effective_threshold = threshold if threshold is not None else FILE_SIZE_THRESHOLD
+    summary = summarize_file(str(file_path), content, max_tokens=max_tokens, threshold=effective_threshold)
 
     if summary is None:
         if json_out:

@@ -3,13 +3,13 @@
 ## HARD RULES — enforced by hooks, do not bypass
 
 - **NEVER use the Explore subagent** — it bypasses agora-code hooks. Use `Read`/`Grep`/`Glob` directly. The `PreToolUse(Agent)` hook will block it.
-- **NEVER call `Read` on a file >50 lines without running `agora-code summarize <file>` first** — the `pre-read.sh` hook enforces this too.
+- **NEVER call `Read` on a file >100 lines without running `agora-code summarize <file>` first** — the `pre-read.sh` hook enforces this too.
 
 These are mechanical constraints, not preferences.
 
 ---
 
-This project provides persistent memory and API discovery for AI agents.
+This project provides persistent memory and context reduction for AI coding agents.
 
 ## How it works
 
@@ -20,7 +20,7 @@ Everything is automatic via Claude Code hooks. When you read a file, symbols and
 ## Always do this
 
 - **At session start**, run `agora-code inject` to load previous session context
-- **STOP — before ANY Read tool call on a file over ~50 lines:**
+- **STOP — before ANY Read tool call on a file over ~100 lines:**
   1. Run `agora-code summarize <file>` first
   2. Then use `offset+limit` to read ONLY the sections you need
   Skipping this wastes the entire point of the tool.
@@ -47,7 +47,7 @@ Everything is automatic via Claude Code hooks. When you read a file, symbols and
 
 ```
 Start     → agora-code inject
-Working   → agora-code summarize <file> before reading any file over ~50 lines
+Working   → agora-code summarize <file> before reading any file over ~100 lines
 Step done → agora-code checkpoint --goal "..." --action "..."
 All done  → agora-code complete --summary "..."
 ```

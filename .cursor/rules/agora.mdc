@@ -8,7 +8,7 @@ alwaysApply: true
 
 ## Always do this
 
-- **Before reading any file over ~200 lines**, run `agora-code summarize <file>` first
+- **Before reading any file over ~100 lines**, run `agora-code summarize <file>` first
 - **At session start**, run `agora-code inject` to load previous session context
 - **When you discover something non-obvious**, run `agora-code learn "<finding>"`
 - **Before starting any task**, run `agora-code recall "<query>"` to check if it's been solved before

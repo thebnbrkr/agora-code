@@ -45,10 +45,9 @@ Use these to inspect the DB without writing SQL:
 | **File snapshots (AST)** | `agora-code list-snapshots` |
 | **Symbol notes (functions/classes)** | `agora-code list-symbols` or `agora-code list-symbols --file path/to/file.py` |
 | **File changes** | `agora-code list-file-changes` (recent across project) or `agora-code file-history <path>` (per file) |
-| **API calls** | `agora-code list-api-calls` |
 | **Current session + stats** | `agora-code status` |
 
-So: **sessions** → `list-sessions` / `restore`; **learnings** → `list-learnings` / `recall`; **file_snapshots** → `list-snapshots`; **symbol_notes** → `list-symbols`; **file_changes** → `list-file-changes` / `file-history`; **api_calls** → `list-api-calls`.
+So: **sessions** → `list-sessions` / `restore`; **learnings** → `list-learnings` / `recall`; **file_snapshots** → `list-snapshots`; **symbol_notes** → `list-symbols`; **file_changes** → `list-file-changes` / `file-history`.
 
 ---
 
@@ -79,7 +78,6 @@ agora-code list-symbols
 agora-code list-symbols --file agora_code/cli.py
 agora-code list-file-changes
 agora-code file-history agora_code/session.py
-agora-code list-api-calls
 
 # 4. Track diffs (single file or all uncommitted)
 agora-code track-diff path/to/file.py
@@ -136,7 +134,6 @@ We **do not** hardcode machine-specific paths (e.g. `/Users/jane/...`, `C:\...`)
 | **file_changes** | Per-file diff summaries; `status` uncommitted→committed; `recorded_at_commit_sha` = HEAD when recorded (fixed); `commit_sha` = updated to new commit on tag. | `project_id`, `file_path`, `status`, `commit_sha`, `recorded_at_commit_sha`, `timestamp`. |
 | **file_snapshots** | One row per (project, file, branch): full AST summary text + symbols JSON from tree-sitter when the file was read/edited. | `project_id`, `file_path`, `branch`; FTS5 on file_path/summary/symbols. |
 | **symbol_notes** | One row per function/class/method: signature, docstring line, start/end line, and **code_block** (actual source lines). | `project_id`, `file_path`, `branch`; FTS5 on symbol_name/signature/note. |
-| **api_calls** | Log of HTTP calls (method, path, status, latency) for API testing sessions. | `session_id`, path/method/success. |
 
 ---
 
@@ -167,5 +164,5 @@ This is built in `session._build_recalled_context()` and printed by `agora-code 
 ## Summary
 
 - **Reads**: We do **not** serve file content or pre-read summary from the DB; we summarize from disk. Symbol lists are served from the DB when present.
-- **DB**: One SQLite DB with sessions, learnings, file_changes, file_snapshots, symbol_notes, api_calls; all scoped by `project_id` (and often branch); FTS5 (and optional sqlite-vec) for search.
+- **DB**: One SQLite DB with sessions, learnings, file_changes, file_snapshots, symbol_notes; all scoped by `project_id` (and often branch); FTS5 (and optional sqlite-vec) for search.
 - **Structured layer**: Yes — inject is a structured mix of last checkpoint (from learnings), recent learnings, live git state, and symbol index from the DB for dirty files.

@@ -5,7 +5,7 @@ what's legacy, and what we're leaving on the table.
 
 ---
 
-## 1. The DB — 7 tables, everything scoped by project_id
+## 1. The DB — 6 tables, everything scoped by project_id
 
 ```
 ~/.agora-code/memory.db  (SQLite + FTS5 + optional sqlite-vec)
@@ -39,10 +39,6 @@ what's legacy, and what we're leaving on the table.
 │ symbol_notes         │ One row per function/class. signature, start_line,     │
 │                      │ end_line, code_block (120 lines max). FTS5 searchable. │
 │                      │ Only injected as name:line — code_block never auto-sent│
-├──────────────────────┼─────────────────────────────────────────────────────────┤
-│ api_calls            │ HTTP call log (method, path, status, latency).         │
-│                      │ Written by serve/chat (original API agent product).    │
-│                      │ Never read by inject, recall, or any Claude Code hook. │
 └──────────────────────┴─────────────────────────────────────────────────────────┘
 ```
 
@@ -122,27 +118,12 @@ they're never injected. You miss context on stable files you've worked with.
 | `remove <id>` | learnings | Delete a learning by ID | Clean up bad learnings |
 | `show` | sessions | Everything in current session context | Debug what Claude sees right now |
 
-### Original API agent product — functional, different use case
+### Removed: the original API agent product
 
-These are the original agora-code purpose: turn any REST API into a
-memory-aware agent. Fully functional, not broken. Just not part of the
-Claude Code session memory flow.
-
-| Command | DB table(s) touched | What it does |
-|---|---|---|
-| `scan` | — | Crawl codebase/URL, discover all API routes via AST/OpenAPI/regex |
-| `agentify` | — | Auto-generate LLM workflows from scanned API routes |
-| `auth` | — | Store API auth credentials (token, type) |
-| `chat` | sessions, api_calls | Interactive NL chat against a live API |
-| `serve` | api_calls (writes), sessions | Start MCP server exposing API routes as tools. Uses vector_store for memory. |
-| `stats` | api_calls | API call stats, failure patterns from memory |
-| `list-api-calls` | api_calls | Raw API call log dump |
-
-`serve` is NOT the same as `memory-server`. `serve` exposes a scanned API
-as MCP tools (plug into Claude Desktop). `memory-server` exposes the
-agora-code DB (sessions, learnings, symbols) as MCP tools for Claude Code.
-The `api_calls` table is written by `serve`/`chat` and read by `stats` —
-it is never read by inject, recall, or any session memory hook.
+The original agora-code purpose — turn any REST API into a memory-aware
+agent (`scan`, `serve`, `chat`, `agentify`, `stats`, `auth`,
+`list-api-calls`, the `api_calls` DB table) — was removed after the pivot
+to session memory. See the `cleanup/remove-apify-legacy` branch history.
 
 ---
 
@@ -289,7 +270,6 @@ Kept here as a reminder to verify before claiming.
 | "on-edit.sh only calls index, not track-diff" | on-edit.sh calls BOTH track-diff AND index_file (lines 29, 34-37) | Read on-edit.sh |
 | "track-diff only runs if CLAUDE.md rule followed" | track-diff runs automatically after every edit on code files | on-edit.sh line 29 |
 | "inject uses last 3 commits" | inject uses up to 4 SHAs: 3 branch commits + 1 main (via get_learnings_for_commits) | Read inject command in cli.py |
-| "API commands (scan, agentify, chat, serve) are dead code" | serve/chat are the original product — fully functional REST API agent | Read cli.py scan/serve sections |
 | "6 tables in the DB" | 7 tables — commit_learnings is a junction table, not part of learnings | Read models.py |
 | "SubagentStart can block the subagent" | SubagentStart fires AFTER launch, exit code ignored for blocking. Only PreToolUse can block | Claude Code hooks docs |
 | "on-subagent.sh stdout injects into subagent context" | SubagentStart stdout shows to user only; must use JSON hookSpecificOutput.additionalContext | Claude Code hooks docs |

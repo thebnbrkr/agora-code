@@ -112,7 +112,7 @@ agora-code inject
 |---|---|
 | Start a session | Injects last checkpoint + relevant learnings from recent commits |
 | Submit a prompt | Recalls relevant past findings, sets session goal |
-| Read a file > 50 lines | Summarizes it via AST — saves 75–95% of tokens |
+| Read a file > 100 lines | Summarizes it via AST — saves 75–95% of tokens |
 | Edit a file | Tracks the diff, re-indexes symbols |
 | Run `git commit` | Stores learnings derived from the commit |
 | Context window compresses | Checkpoints before, re-injects after |
@@ -216,7 +216,6 @@ AI assistants forget everything when a conversation ends. agora-code persists wh
 | `file_changes` | Per-file git diff summaries with commit SHA |
 | `file_snapshots` | AST summaries per (project, file, branch) |
 | `symbol_notes` | Per-symbol: name, type, line numbers, signature, code block |
-| `api_calls` | HTTP interaction log (for `serve` / `chat` commands) |
 
 ### Claude Code hooks
 
@@ -463,57 +462,13 @@ agora-code list-learnings       # permanent findings
 agora-code list-snapshots       # AST summaries per file
 agora-code list-symbols         # indexed functions and classes
 agora-code list-file-changes    # per-file diff history
-agora-code list-api-calls       # HTTP calls from serve/chat
 ```
 
 All accept `-n` / `--limit`. `list-symbols` also accepts `--file <path>`.
 
 ---
 
-### API tools
-
-#### `agora-code scan`
-
-Discover all API routes in a codebase or from a live URL.
-
-```bash
-agora-code scan ./my-fastapi-app
-agora-code scan https://api.example.com
-agora-code scan ./my-app --output routes.json
-```
-
----
-
-#### `agora-code serve`
-
-Start an MCP server for your API.
-
-```bash
-agora-code serve ./my-api --url http://localhost:8000
-```
-
-```json
-{
-  "mcpServers": {
-    "my-api": {
-      "command": "agora-code",
-      "args": ["serve", "./my-api", "--url", "http://localhost:8000"]
-    }
-  }
-}
-```
-
----
-
-#### `agora-code chat`
-
-Interactive natural-language chat against your API.
-
-```bash
-agora-code chat ./my-api --url http://localhost:8000
-```
-
----
+### MCP server
 
 #### `agora-code memory-server`
 
@@ -546,12 +501,11 @@ agora-code memory-server
 
 | Variable | Purpose | Default |
 |---|---|---|
-| `OPENAI_API_KEY` | OpenAI embeddings + LLM scan | — |
-| `GEMINI_API_KEY` | Gemini embeddings + LLM scan | — |
-| `ANTHROPIC_API_KEY` | Claude for LLM scan + workflow detection | — |
+| `OPENAI_API_KEY` | OpenAI embeddings + LLM change notes | — |
+| `GEMINI_API_KEY` | Gemini embeddings + LLM change notes | — |
+| `ANTHROPIC_API_KEY` | Claude for LLM change notes (track-diff) | — |
 | `EMBEDDING_PROVIDER` | `auto` / `openai` / `gemini` / `local` | `auto` |
 | `AGORA_CODE_DB` | Override DB path | `~/.agora-code/memory.db` |
-| `AGORA_AUTH_TOKEN` | Default bearer token for API calls | — |
 
 ---
 
