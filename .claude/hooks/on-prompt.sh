@@ -17,10 +17,8 @@ except Exception:
 
 if [ -z "$PROMPT" ]; then exit 0; fi
 
-# Auto-set goal from first substantive prompt if no goal exists yet
-CURRENT_GOAL=$(agora-code inject --quiet 2>/dev/null)
-if [ -z "$CURRENT_GOAL" ]; then
-    IS_SUBSTANTIVE=$(printf '%s' "$PROMPT" | python3 -c "
+# Start a session with this prompt as goal when none is active (none yet, or last one completed)
+IS_SUBSTANTIVE=$(printf '%s' "$PROMPT" | python3 -c "
 import sys, re
 text = sys.stdin.read().strip()
 if len(text) < 30:
@@ -32,10 +30,9 @@ elif re.match(r'^agora-code\\s', text):
 else:
     print('yes')
 " 2>/dev/null)
-    if [ "$IS_SUBSTANTIVE" = "yes" ]; then
-        SHORT_GOAL=$(printf '%s' "$PROMPT" | cut -c1-120)
-        agora-code checkpoint --goal "$SHORT_GOAL" --quiet 2>/dev/null || true
-    fi
+if [ "$IS_SUBSTANTIVE" = "yes" ]; then
+    SHORT_GOAL=$(printf '%s' "$PROMPT" | cut -c1-120)
+    agora-code checkpoint --goal "$SHORT_GOAL" --if-stale --quiet 2>/dev/null || true
 fi
 
 # Recall relevant learnings for this prompt

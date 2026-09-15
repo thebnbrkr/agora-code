@@ -21,7 +21,7 @@ So: **DB** = session state, learnings, file/symbol metadata and cached summaries
 |----------|--------|--------------|
 | **Pre-read hook (large file)** | **Yes when cached** | `agora-code summarize` checks the DB first: if we have a `file_snapshot` for that file at the **same git commit**, we serve that summary and do **not** read from disk. Otherwise we summarize from disk and the on-read hook then writes to the DB. |
 | **Symbol list (e.g. get_file_symbols MCP)** | **Yes** | We look up `symbol_notes` in the DB first; only if not indexed do we read the file and call `index_file`. |
-| **Inject (session start)** | **Yes** | We build context from the DB: last checkpoint (learnings), recent learnings, and symbol index for dirty files — plus live git log and uncommitted list. |
+| **Inject (session start)** | **Yes** | We build context from the DB: last checkpoint (latest session row), recent learnings, and symbol index for dirty files — plus live git log and uncommitted list. |
 
 We do **not** serve the per-symbol `code_block` (truncated at 120 lines) to the AI in inject or `get_file_symbols` — those only return names and line numbers; the AI uses Read (disk) for full content.
 
@@ -132,7 +132,7 @@ We **do not** hardcode machine-specific paths (e.g. `/Users/jane/...`, `C:\...`)
 | Table | One-sentence purpose | Queried by |
 |-------|----------------------|------------|
 | **sessions** | Stores one row per coding session (goal, hypothesis, status, full session_data JSON); used for restore and semantic recall. | `project_id`, `last_active`; optional vector search on embedding. |
-| **learnings** | Searchable findings/decisions/blockers/next_steps and checkpoint blobs (goal, decisions, next_steps, blockers) from past convos. | `project_id`, `type`, FTS5 on finding/evidence/tags; optional vector search. |
+| **learnings** | Searchable findings/decisions/blockers/next_steps from past convos. | `project_id`, `type`, FTS5 on finding/evidence/tags; optional vector search. |
 | **file_changes** | Per-file diff summaries; `status` uncommitted→committed; `recorded_at_commit_sha` = HEAD when recorded (fixed); `commit_sha` = updated to new commit on tag. | `project_id`, `file_path`, `status`, `commit_sha`, `recorded_at_commit_sha`, `timestamp`. |
 | **file_snapshots** | One row per (project, file, branch): full AST summary text + symbols JSON from tree-sitter when the file was read/edited. | `project_id`, `file_path`, `branch`; FTS5 on file_path/summary/symbols. |
 | **symbol_notes** | One row per function/class/method: signature, docstring line, start/end line, and **code_block** (actual source lines). | `project_id`, `file_path`, `branch`; FTS5 on symbol_name/signature/note. |
@@ -143,7 +143,7 @@ We **do not** hardcode machine-specific paths (e.g. `/Users/jane/...`, `C:\...`)
 ## Main query patterns
 
 - **Sessions**: List by `project_id` ORDER BY `last_active` DESC; load one by `session_id`. Optional: vector search on `sessions_vec_{dim}` for semantic session recall.
-- **Learnings**: Keyword search via `learnings_fts` (FTS5); filter by `project_id`, `type`; checkpoint = learnings with tag `checkpoint`, evidence = JSON with goal/decisions/next_steps/blockers.
+- **Learnings**: Keyword search via `learnings_fts` (FTS5); filter by `project_id`, `type`.
 - **File snapshots**: Lookup by `(file_path, project_id, branch)`; search via `file_snapshots_fts`.
 - **Symbol notes**: Lookup by `(file_path, project_id, branch)` via `get_symbols_for_file`; search via `symbol_notes_fts`.
 - **File changes**: By `project_id`, `file_path`, or `commit_sha` for history.
@@ -154,7 +154,7 @@ We **do not** hardcode machine-specific paths (e.g. `/Users/jane/...`, `C:\...`)
 
 **Yes.** We have a **structured data layer** that is injected into a new conversation:
 
-1. **Last checkpoint** — From `learnings` where `tags LIKE '%checkpoint%'`, evidence JSON decoded to: goal, decisions, next_steps, blockers, files_touched, branch, commit_sha. Injected as a short "LAST CHECKPOINT" block.
+1. **Last checkpoint** — From the project's latest `sessions` row: goal, hypothesis, next_steps, blockers, files_changed, branch, commit. Injected as a "LAST CHECKPOINT" block whose header shows its age (`checkpointed_at`, stamped by checkpoints with content, `complete` and `restore`) and how many commits landed since.
 2. **Recent learnings** — Non-checkpoint learnings (type = decision / finding / blocker / next_step) from `learnings`, ordered by timestamp, limited to a few. Injected as "LEARNINGS" with one line per finding.
 3. **Git log** — Live `git log --oneline -6` (not from DB).
 4. **Uncommitted files** — Live `git diff --name-only` (not from DB).
@@ -168,4 +168,4 @@ This is built in `session._build_recalled_context()` and printed by `agora-code 
 
 - **Reads**: We do **not** serve file content or pre-read summary from the DB; we summarize from disk. Symbol lists are served from the DB when present.
 - **DB**: One SQLite DB with sessions, learnings, file_changes, file_snapshots, symbol_notes, api_calls; all scoped by `project_id` (and often branch); FTS5 (and optional sqlite-vec) for search.
-- **Structured layer**: Yes — inject is a structured mix of last checkpoint (from learnings), recent learnings, live git state, and symbol index from the DB for dirty files.
+- **Structured layer**: Yes — inject is a structured mix of last checkpoint (from sessions), recent learnings, live git state, and symbol index from the DB for dirty files.

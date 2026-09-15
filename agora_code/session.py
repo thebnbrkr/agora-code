@@ -16,7 +16,7 @@ The VectorStore (SQLite) is used separately only for:
 
 Session JSON shape:
 {
-  "session_id": "2026-03-08-debug-user-api",
+  "session_id": "2026-03-08-debug-user-api-3f9a1c",
   "started_at": "2026-03-08T09:30:00Z",
   "last_active": "2026-03-08T14:45:00Z",
   "status": "in_progress",
@@ -174,6 +174,32 @@ def _get_commit_sha() -> Optional[str]:
         return None
 
 
+def _commits_since(sha: Optional[str]) -> Optional[int]:
+    """
+    Number of commits on HEAD since `sha`. A None sha means the checkpoint was
+    saved before any commit existed, so every commit on HEAD counts.
+    Returns None when unknown: git unavailable, no HEAD, a non-sha value, or
+    `sha` isn't an ancestor of HEAD (other branch, amended/rebased away).
+    """
+    if sha is not None and not re.fullmatch(r"[0-9a-fA-F]{4,40}", sha):
+        return None
+    try:
+        if sha is not None:
+            ancestor = subprocess.run(
+                ["git", "merge-base", "--is-ancestor", sha, "HEAD"],
+                capture_output=True, text=True, timeout=5,
+            )
+            if ancestor.returncode != 0:
+                return None
+        result = subprocess.run(
+            ["git", "rev-list", "--count", f"{sha}..HEAD" if sha else "HEAD"],
+            capture_output=True, text=True, timeout=5,
+        )
+        return int(result.stdout.strip()) if result.returncode == 0 else None
+    except Exception:
+        return None
+
+
 def _get_git_author() -> Optional[str]:
     """
     Return the current git user identity (user.name + user.email) for
@@ -314,6 +340,8 @@ def new_session(
         # ── API-specific (stays empty for non-API sessions) ────────
         "api_base_url":    api_base_url or "",
         "endpoints_tested": [],
+        # ── checkpoint (key present = created by a version that tracks it) ──
+        "checkpointed_at": None,
     }
 
 
@@ -353,14 +381,23 @@ def load_session(project_root: Optional[Path] = None) -> Optional[Dict[str, Any]
     if not path.exists():
         # Try global path
         path = get_global_session_path()
-        if not path.exists():
-            return None
+    return _read_session_file(path)
 
+
+def _read_session_file(path: Path) -> Optional[Dict[str, Any]]:
+    if not path.exists():
+        return None
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
         return data if isinstance(data, dict) else None
     except Exception:
         return None
+
+
+def _load_own_session(project_root: Optional[Path] = None) -> Optional[Dict[str, Any]]:
+    """The session this location writes to — no global fallback, so a project
+    never inherits (and overwrites) the global or another context's session."""
+    return _read_session_file(get_session_path(project_root))
 
 
 def load_session_if_recent(
@@ -394,19 +431,31 @@ def load_session_if_recent(
 def update_session(
     updates: Dict[str, Any],
     project_root: Optional[Path] = None,
+    *,
+    mark_checkpoint: bool = True,
+    fresh: bool = False,
 ) -> Dict[str, Any]:
     """
     Merge updates into the current session and save.
-    Creates a new minimal session if none exists.
+    Creates a new minimal session if none exists, or always when `fresh`
+    (a new task: nothing is carried over from the previous session).
     Also auto-refreshes git branch + uncommitted files, and dual-writes
     to SQLite so every checkpoint is browsable (not just completed sessions).
+
+    The checkpoint_* fields are stamped only when `updates` carries content, so
+    hook calls like `checkpoint --quiet` don't make an old checkpoint look fresh.
     """
-    existing = load_session(project_root) or new_session()
+    goal = updates.get("goal")
+    own = None if fresh else _load_own_session(project_root)
+    # Sessions from before checkpoint tracking are often copies of another
+    # project's session (shared id, unrelated content): start fresh, don't merge.
+    existing = own if own and "checkpointed_at" in own else new_session(goal=goal)
     # Auto-refresh git state on every checkpoint
+    head = _get_commit_sha()
     branch = _get_git_branch() or existing.get("branch")
     git_updates: Dict[str, Any] = {
         "branch":            branch,
-        "commit_sha":        _get_commit_sha() or existing.get("commit_sha"),
+        "commit_sha":        head or existing.get("commit_sha"),
         "ticket":            _extract_ticket(branch) or existing.get("ticket"),
         "uncommitted_files": _get_uncommitted_files() or existing.get("uncommitted_files", []),
     }
@@ -416,6 +465,10 @@ def update_session(
         if auto_goal:
             git_updates["goal"] = auto_goal
     merged = {**existing, **git_updates, **updates}
+    if mark_checkpoint and any(v not in (None, "", [], {}) for v in updates.values()):
+        merged["checkpointed_at"] = _now()
+        merged["checkpoint_commit_sha"] = head
+        merged["checkpoint_branch"] = branch
     save_session(merged, project_root)
 
     # Dual-write to SQLite so sessions are always browsable
@@ -438,11 +491,14 @@ def archive_session(
     Also saves a summary embedding if embeddings are available.
     Returns the final session dict.
     """
-    session = load_session(project_root) or {}
+    session = _load_own_session(project_root) or new_session()
     session["status"] = "complete"
     session["outcome"] = outcome
     if summary:
         session["summary"] = summary
+    session["checkpointed_at"] = _now()
+    session["checkpoint_commit_sha"] = _get_commit_sha()
+    session["checkpoint_branch"] = _get_git_branch()
     save_session(session, project_root)
 
     # Persist to vector store for future recall
@@ -459,6 +515,94 @@ def archive_session(
         pass  # Non-fatal: session is still saved to JSON
 
     return session
+
+
+def checkpoint_is_stale(session: Optional[Dict[str, Any]] = None) -> bool:
+    """
+    True when there's no real checkpoint yet or the session was completed, i.e.
+    the next task should start a new session. Commits don't count: agents commit
+    mid-task, and inject already labels checkpoints with the commits since.
+    """
+    if session is None:
+        session = _load_own_session()
+    return not session or not session.get("checkpointed_at") or session.get("status") == "complete"
+
+
+def _relative_age(iso_ts: Optional[str]) -> Optional[str]:
+    if not iso_ts:
+        return None
+    try:
+        ts = datetime.fromisoformat(iso_ts.replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+    if ts.tzinfo is None:
+        ts = ts.replace(tzinfo=timezone.utc)
+    secs = (datetime.now(timezone.utc) - ts).total_seconds()
+    for unit, size in (("year", 365 * 86400), ("month", 30 * 86400), ("day", 86400),
+                       ("hour", 3600), ("minute", 60)):
+        if secs >= size:
+            n = int(secs // size)
+            return f"{n} {unit}{'s' if n != 1 else ''} ago"
+    return "just now"
+
+
+def _format_last_checkpoint(session: Dict[str, Any]) -> Optional[str]:
+    """Render the LAST CHECKPOINT block, labelled with its age and commits since."""
+    if "checkpointed_at" in session and not session["checkpointed_at"]:
+        return None  # never checkpointed (e.g. created by a hook, goal only from branch name)
+    goal = (session.get("goal") or "").strip()
+    hypothesis = (session.get("hypothesis") or "").strip()
+    decisions = [str(d) for d in session.get("decisions_made") or [] if d]
+    next_steps = [str(n) for n in session.get("next_steps") or [] if n]
+    blockers = [str(b) for b in session.get("blockers") or [] if b]
+    files = []
+    for f in session.get("files_changed") or []:
+        name = f.get("file") if isinstance(f, dict) else f
+        if name:
+            files.append(str(name))
+    summary = (session.get("summary") or "").strip() if session.get("status") == "complete" else ""
+    if not any((goal, hypothesis, decisions, next_steps, blockers, files, summary)):
+        return None
+
+    # branch/commit_sha/last_active are refreshed by every hook call, so only the
+    # checkpoint_* fields say anything about when this content was saved.
+    label: List[str] = []
+    cp_branch = sha = None
+    if not session.get("checkpointed_at"):
+        label.append("age unknown — saved by an older agora-code")
+    else:
+        cp_branch = session.get("checkpoint_branch")
+        sha = session.get("checkpoint_commit_sha")
+        age = _relative_age(session["checkpointed_at"])
+        if age:
+            label.append(age)
+        since = _commits_since(sha)
+        if since:
+            label.append(f"{since} commit{'s' if since != 1 else ''} since — may be outdated")
+        elif since is None and sha:
+            if cp_branch and cp_branch != _get_git_branch():
+                label.append(f"saved on branch {cp_branch}")
+            else:
+                label.append("its commit is no longer in this branch's history")
+
+    lines = ["LAST CHECKPOINT (" + ", ".join(label) + ")"]
+    if goal:
+        lines.append(f"  goal:       {goal[:120]}")
+    if hypothesis:
+        lines.append(f"  hypothesis: {hypothesis[:120]}")
+    if decisions:
+        lines.append("  decisions:  " + "; ".join(d[:80] for d in decisions[:3]))
+    if next_steps:
+        lines.append("  next:       " + "; ".join(n[:80] for n in next_steps[:3]))
+    if blockers:
+        lines.append("  blockers:   " + "; ".join(b[:80] for b in blockers[:2]))
+    if files:
+        lines.append("  files:      " + ", ".join(files[:6]))
+    if summary:
+        lines.append(f"  completed:  {summary[:120]}")
+    if cp_branch or sha:
+        lines.append(f"  branch:     {cp_branch or '?'}  commit: {(sha or '?')[:7]}")
+    return "\n".join(lines)
 
 
 # --------------------------------------------------------------------------- #
@@ -542,14 +686,15 @@ def _now() -> str:
 
 
 def _slug(goal: Optional[str], branch: Optional[str] = None) -> str:
-    """Create a readable session ID like '2026-03-08-fix-post-users'."""
+    """Create a readable session ID like '2026-03-08-fix-post-users-3f9a1c'."""
     date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     source = goal or branch
     if not source:
         return f"{date}-{uuid.uuid4().hex[:6]}"
     words = "".join(c if c.isalnum() else "-" for c in source.lower()).strip("-")
     words = "-".join(w for w in words.split("-") if w)[:40]
-    return f"{date}-{words}"
+    # Suffix keeps ids unique: sessions table upserts by id across all projects
+    return f"{date}-{words}-{uuid.uuid4().hex[:6]}"
 
 
 def _session_embedding_text(session: Dict) -> str:
@@ -578,13 +723,12 @@ def _build_recalled_context(project_id: Optional[str] = None) -> Optional[str]:
     Build structured inject context from DB + git.
 
     Output sections (most-signal-first, target ~350 tokens total):
-      1. Last checkpoint  — goal, decisions, next_steps, blockers
+      1. Last checkpoint  — from the latest session row, labelled with age + commits since
       2. Recent learnings — type-tagged, non-checkpoint findings
       3. Git log          — last 5 commits (always fresh)
       4. Uncommitted files
       5. Symbol index     — one-liners for recently touched files
     """
-    import json as _json
     import subprocess as _sp
 
     try:
@@ -594,72 +738,21 @@ def _build_recalled_context(project_id: Optional[str] = None) -> Optional[str]:
         branch = _get_git_branch()
         parts: List[str] = []
 
-        # ── 1. Last structured checkpoint ────────────────────────────────────
-        checkpoints = store.search_learnings_keyword(
-            "", k=1,
-            project_id=pid,
-            type="finding",      # checkpoints stored as finding type
-        )
-        # filter to actual checkpoint learnings by tag
-        raw_checkpoints = store._conn_().execute("""
-            SELECT finding, evidence FROM learnings
+        # ── 1. Last checkpoint — newest session row for this project with content ──
+        # (hook-created sessions without content can be newer than the real checkpoint)
+        rows = store._conn_().execute("""
+            SELECT session_data FROM sessions
             WHERE project_id = ?
-              AND tags LIKE '%checkpoint%'
-            ORDER BY timestamp DESC LIMIT 1
-        """, (pid,)).fetchone()
-
-        if raw_checkpoints:
-            finding = raw_checkpoints[0] or ""
-            evidence_raw = raw_checkpoints[1] or ""
+            ORDER BY last_active DESC LIMIT 20
+        """, (pid,)).fetchall() if pid else []
+        for (session_data,) in rows:
             try:
-                ev = _json.loads(evidence_raw)
-                cp_goal = ev.get("goal", "")
-                cp_decisions = ev.get("decisions", [])
-                cp_next = ev.get("next_steps", [])
-                cp_blockers = ev.get("blockers", [])
-                cp_files = ev.get("files_touched", [])
-                cp_branch = ev.get("branch", "")
-                cp_commit = ev.get("commit_sha", "")
-
-                section = ["LAST CHECKPOINT"]
-                if cp_goal:
-                    section.append(f"  goal:      {cp_goal[:120]}")
-                if cp_decisions:
-                    section.append("  decisions: " + "; ".join(d[:80] for d in cp_decisions[:3]))
-                if cp_next:
-                    section.append("  next:      " + "; ".join(n[:80] for n in cp_next[:3]))
-                if cp_blockers:
-                    section.append("  blockers:  " + "; ".join(b[:80] for b in cp_blockers[:2]))
-                if cp_files:
-                    section.append("  files:     " + ", ".join(cp_files[:6]))
-                if cp_branch or cp_commit:
-                    section.append(f"  branch:    {cp_branch}  commit: {cp_commit}")
-                parts.append("\n".join(section))
+                checkpoint_block = _format_last_checkpoint(json.loads(session_data))
             except Exception:
-                # evidence wasn't JSON — fall back to raw finding text
-                if finding:
-                    parts.append(f"LAST CHECKPOINT\n  {finding[:200]}")
-
-        # ── 1b. Compressed transcript from last session ───────────────────────
-        try:
-            session_row = store._conn_().execute("""
-                SELECT session_data FROM sessions
-                WHERE project_id = ?
-                ORDER BY last_active DESC LIMIT 1
-            """, (pid,)).fetchone()
-            if session_row and session_row[0]:
-                sd = _json.loads(session_row[0])
-                transcript = sd.get("compressed_transcript", [])
-                if transcript:
-                    lines = ["LAST SESSION (compressed)"]
-                    for msg in transcript[-10:]:  # last 10 exchanges
-                        role = msg.get("role", "")
-                        text = msg.get("text", "")[:150]
-                        prefix = "  you: " if role == "user" else "  ai:  "
-                        lines.append(f"{prefix}{text}")
-                    parts.append("\n".join(lines))
-        except Exception:
-            pass
+                continue
+            if checkpoint_block:
+                parts.append(checkpoint_block)
+                break
 
         # ── 2. Git log (live) — get recent commit SHAs for learning lookup ───
         def _git(cmd):
