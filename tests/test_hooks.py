@@ -190,16 +190,15 @@ class TestGeminiHooks:
 def _run_cli(*args, env_override=None) -> subprocess.CompletedProcess:
     """Run an agora-code CLI command and return the result."""
     import os
-    env = os.environ.copy()
-    # Use a temp DB so tests don't touch the real ~/.agora-code/memory.db
-    import tempfile
-    env["AGORA_CODE_DB"] = tempfile.mktemp(suffix=".db")
+    env = os.environ.copy()  # conftest already points AGORA_CODE_DB and HOME at a tmp dir
+    env["PYTHONPATH"] = str(REPO_ROOT)
     if env_override:
         env.update(env_override)
+    # Run from the isolated HOME (conftest), not the repo, so session.json isn't written into the checkout
     return subprocess.run(
         [sys.executable, "-m", "agora_code.cli"] + list(args),
         capture_output=True, text=True, env=env,
-        cwd=str(REPO_ROOT),
+        cwd=env["HOME"],
     )
 
 
@@ -317,6 +316,20 @@ def test_install_hooks_mcp_json_merges_existing(tmp_path, monkeypatch):
     mcp = json.loads((tmp_path / ".mcp.json").read_text())
     assert "other-tool" in mcp["mcpServers"], "existing MCP servers must be preserved"
     assert "agora-memory" in mcp["mcpServers"], "agora-memory must be added"
+
+
+def test_on_prompt_sets_goal_with_if_stale(tmp_path, monkeypatch):
+    """on-prompt.sh must not gate goal-setting on empty `inject` output (never empty in a git repo)."""
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(Path, "home", staticmethod(lambda: fake_home))
+    _install_claude_code_hooks(force=True)
+    for script in (tmp_path / ".claude" / "hooks" / "on-prompt.sh",
+                   REPO_ROOT / ".claude" / "hooks" / "on-prompt.sh"):
+        content = script.read_text()
+        assert "checkpoint --goal" in content and "--if-stale" in content, script
+        assert "inject --quiet" not in content, script
 
 
 # --------------------------------------------------------------------------- #

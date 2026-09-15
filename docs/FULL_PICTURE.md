@@ -13,12 +13,12 @@ what's legacy, and what we're leaving on the table.
 ┌──────────────────────┬─────────────────────────────────────────────────────────┐
 │ Table                │ What it stores                                          │
 ├──────────────────────┼─────────────────────────────────────────────────────────┤
-│ sessions             │ One row per coding session. goal, status, compressed    │
-│                      │ transcript JSON, optional embedding for semantic recall. │
+│ sessions             │ One row per coding session: goal, next_steps, blockers, │
+│                      │ checkpoint_* stamps, optional embedding for recall.     │
 ├──────────────────────┼─────────────────────────────────────────────────────────┤
-│ learnings            │ Findings, decisions, blockers, next_steps, checkpoints. │
+│ learnings            │ Findings, decisions, blockers, next_steps.              │
 │                      │ FTS5 for keyword search, sqlite-vec for semantic.       │
-│                      │ Checkpoints: tag=checkpoint, evidence=JSON blob.        │
+│                      │ Legacy tag=checkpoint rows are ignored by inject.       │
 │                      │ Commit-tagged: commit_sha + link in commit_learnings.   │
 ├──────────────────────┼─────────────────────────────────────────────────────────┤
 │ commit_learnings     │ Junction table: (commit_sha, learning_id, project_id).  │
@@ -53,12 +53,9 @@ what's legacy, and what we're leaving on the table.
 ```
 agora-code inject
         │
-        ├── learnings WHERE project_id=X AND tags LIKE '%checkpoint%'
-        │   ORDER BY timestamp DESC LIMIT 1
-        │   → LAST CHECKPOINT block (goal, decisions, next_steps, blockers)
-        │
-        ├── sessions WHERE project_id=X ORDER BY last_active DESC LIMIT 1
-        │   → LAST SESSION (compressed) — last 10 exchanges
+        ├── sessions WHERE project_id=X ORDER BY last_active DESC (newest with content)
+        │   → LAST CHECKPOINT block (goal, next_steps, blockers, files),
+        │     labelled with age (checkpointed_at) + commits since
         │
         ├── commit_learnings JOIN learnings for last 3 branch commits + 1 main
         │   (up to 4 commit SHAs total via get_learnings_for_commits)
@@ -90,7 +87,7 @@ they're never injected. You miss context on stable files you've worked with.
 |---|---|---|
 | `inject` | learnings, sessions, symbol_notes | Prints compressed context for session start |
 | `summarize <file>` | file_snapshots (read + write) | AST-compresses file; serves from DB if commit matches |
-| `checkpoint` | learnings (write, tag=checkpoint) | Saves goal/decisions/next_steps/blockers mid-task |
+| `checkpoint` | sessions (write, via session.json dual-write) | Saves goal/next_steps/blockers mid-task; `--if-stale` only saves when there's no checkpoint yet or the last session was completed, and then starts a new session |
 | `complete` | sessions (write), learnings (write) | Archives session to long-term memory |
 | `learn "<text>"` | learnings (write) | Force-stores a finding now |
 | `recall "<query>"` | learnings (read, FTS5→semantic) | BM25 search, falls back to semantic if OPENAI_API_KEY set |
@@ -191,10 +188,13 @@ User runs git commit
 Claude stops
   → on-stop.sh fires (Stop)
       → agora-code checkpoint --quiet
-          → learnings: writes checkpoint (tag=checkpoint, evidence=JSON)
+          → sessions: refreshes git state only (no content → checkpointed_at unchanged)
+      → agora-code learn "Session goal: … — Claude found: …" --tags conversation-summary
 
 User submits prompt
   → on-prompt.sh fires (UserPromptSubmit)
+      → agora-code checkpoint --goal "<prompt>" --if-stale
+          → sessions: new session with this goal, only if none is active
       → agora-code recall "<prompt>"
           → learnings: FTS5 search, injects relevant findings as context
 ```

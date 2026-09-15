@@ -131,7 +131,7 @@ def memory(limit, limit_arg, verbose):
             )
             goal_str = s.get("goal") or ""
             goal = goal_str[:50] + ("..." if len(goal_str) > 50 else "")
-            _echo(f"  {status_icon} {s.get('session_id', '')[:44]}  {s.get('last_active', '')[:10]}  {goal}")
+            _echo(f"  {status_icon} {s.get('session_id', '')}  {s.get('last_active', '')[:10]}  {goal}")
         _echo("")
     else:
         _echo("No sessions in DB yet.")
@@ -235,7 +235,7 @@ def list_sessions(limit):
     for s in sessions:
         status_icon = {"in_progress": "🔄", "complete": "✅", "abandoned": "❌"}.get(s.get("status", ""), "📋")
         goal = (s.get("goal") or "")[:60]
-        _echo(f"  {status_icon} {s.get('session_id', '')[:44]}  {s.get('last_active', '')[:10]}  {goal}")
+        _echo(f"  {status_icon} {s.get('session_id', '')}  {s.get('last_active', '')[:10]}  {goal}")
 
 
 @main.command("list-learnings")
@@ -335,7 +335,11 @@ def list_file_changes(limit):
               help="File you changed, optionally with note: 'auth.py:added retry logic'")
 @click.option("--quiet", is_flag=True, default=False,
               help="Suppress output — for hook/automation use")
-def checkpoint(goal, hypothesis, action, context, api, next_step, blocker, file_changed, quiet):
+@click.option("--if-stale", is_flag=True, default=False,
+              help="Only save when there's no checkpoint yet or the last session was completed; "
+                   "then starts a new session")
+def checkpoint(goal, hypothesis, action, context, api, next_step, blocker, file_changed, quiet,
+               if_stale):
     """Save current session state to .agora-code/session.json.
 
     \b
@@ -347,7 +351,7 @@ def checkpoint(goal, hypothesis, action, context, api, next_step, blocker, file_
     agora-code checkpoint --file "auth.py:added retry" --file "tests/test_auth.py:updated tests"
     agora-code checkpoint --next "Write test for edge case" --blocker "Waiting for review"
     """
-    from agora_code.session import load_session, new_session, update_session
+    from agora_code.session import checkpoint_is_stale, update_session
 
     updates: dict = {}
     if goal:       updates["goal"] = goal
@@ -367,7 +371,13 @@ def checkpoint(goal, hypothesis, action, context, api, next_step, blocker, file_
                 files.append({"file": f.strip(), "what": ""})
         updates["files_changed"] = files
 
-    session = update_session(updates)
+    if if_stale and not (updates and checkpoint_is_stale()):
+        if not quiet:
+            _echo("Skipped (--if-stale): nothing to save, or the current session is still active.")
+        return
+
+    # Reaching here with --if-stale means the last session is done or never checkpointed
+    session = update_session(updates, fresh=if_stale)
     if not quiet:
         _echo(f"✅ Session saved: {session['session_id']}")
         _echo(f"   Goal: {session.get('goal') or '(none)'} | Status: {session.get('status', 'in_progress')}")
@@ -456,7 +466,9 @@ def restore(session_id):
     agora-code restore 2026-03-08-debug-post-users      # restore specific
     """
     from agora_code.vector_store import get_store
-    from agora_code.session import save_session
+    from agora_code.session import (
+        _get_commit_sha, _get_git_branch, _get_project_id, _now, save_session,
+    )
     from agora_code.compress import compress_session
 
     vs = get_store()
@@ -477,9 +489,14 @@ def restore(session_id):
         _echo(f"❌ Session '{session_id}' not found.")
         sys.exit(1)
 
-    # Restore: mark in_progress, resave to JSON
+    # Restore: mark in_progress and make it the current checkpoint, otherwise the
+    # next prompt's `checkpoint --if-stale` would replace it with a new session
     data["status"] = "in_progress"
+    data["checkpointed_at"] = _now()
+    data["checkpoint_commit_sha"] = _get_commit_sha()
+    data["checkpoint_branch"] = _get_git_branch()
     save_session(data)
+    vs.save_session(data, project_id=_get_project_id())
     _echo(f"✅ Session '{session_id}' restored as active.")
     _echo("")
     _echo(compress_session(data, level="summary"))
@@ -1624,10 +1641,8 @@ except Exception:
 
 if [ -z "$PROMPT" ]; then exit 0; fi
 
-# Auto-set goal from first substantive prompt if no goal exists yet
-CURRENT_GOAL=$({agora_bin} inject --quiet 2>/dev/null)
-if [ -z "$CURRENT_GOAL" ]; then
-    IS_SUBSTANTIVE=$(printf '%s' "$PROMPT" | python3 -c "
+# Start a session with this prompt as goal when none is active (none yet, or last one completed)
+IS_SUBSTANTIVE=$(printf '%s' "$PROMPT" | python3 -c "
 import sys, re
 text = sys.stdin.read().strip()
 if len(text) < 30:
@@ -1639,10 +1654,9 @@ elif re.match(r'^agora-code\\\\s', text):
 else:
     print('yes')
 " 2>/dev/null)
-    if [ "$IS_SUBSTANTIVE" = "yes" ]; then
-        SHORT_GOAL=$(printf '%s' "$PROMPT" | cut -c1-120)
-        {agora_bin} checkpoint --goal "$SHORT_GOAL" --quiet 2>/dev/null || true
-    fi
+if [ "$IS_SUBSTANTIVE" = "yes" ]; then
+    SHORT_GOAL=$(printf '%s' "$PROMPT" | cut -c1-120)
+    {agora_bin} checkpoint --goal "$SHORT_GOAL" --if-stale --quiet 2>/dev/null || true
 fi
 
 # Recall relevant learnings for this prompt

@@ -29,7 +29,7 @@ agora-code gives you persistent memory across sessions. Hooks handle most things
 | `on-edit.sh` | PostToolUse(Write/Edit) | Re-indexes symbols, tracks diff |
 | `on-bash.sh` | PostToolUse(Bash) | Tags committed files with SHA on `git commit` |
 | `on-prompt.sh` | UserPromptSubmit | Auto-sets goal, recalls relevant learnings |
-| `on-stop.sh` | Stop | Parses transcript → structured checkpoint |
+| `on-stop.sh` | Stop | Saves a one-line session summary learning |
 
 PostCompact re-injects context automatically after context compaction.
 
@@ -59,7 +59,7 @@ All done      → agora-code complete --summary "..."       # archive session
 `agora-code inject` outputs ~300 tokens of structured context:
 
 ```
-LAST CHECKPOINT
+LAST CHECKPOINT (2 days ago, 3 commits since — may be outdated)
   goal / decisions / next_steps / blockers / files / branch + commit
 
 LEARNINGS

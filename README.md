@@ -61,6 +61,8 @@ Already have `.claude/settings.json`? Use `--force`:
 agora-code install-hooks --claude-code --force
 ```
 
+**Upgrading?** Hook scripts are copied into each project, so re-run `install-hooks --claude-code --force` in every project after upgrading to pick up hook changes (this also rewrites `.claude/settings.json`).
+
 **Cursor:**
 
 Copy the `.cursor/` directory from this repo into your project root:
@@ -116,7 +118,7 @@ agora-code inject
 | Edit a file | Tracks the diff, re-indexes symbols |
 | Run `git commit` | Stores learnings derived from the commit |
 | Context window compresses | Checkpoints before, re-injects after |
-| End a session | Parses transcript → structured checkpoint in DB |
+| End a session | Saves a one-line session summary as a learning |
 
 ---
 
@@ -228,7 +230,7 @@ AI assistants forget everything when a conversation ends. agora-code persists wh
 | `on-edit.sh` | PostToolUse(Write/Edit) | Tracks diff + re-indexes symbols |
 | `on-bash.sh` | PostToolUse(Bash) | Detects `git commit` → tags files → runs `learn-from-commit` |
 | `on-prompt.sh` | UserPromptSubmit | Recalls relevant learnings, auto-sets session goal |
-| `on-stop.sh` | Stop | Parses transcript → extracts goal/decisions/next steps → checkpoint |
+| `on-stop.sh` | Stop | Refreshes session git state + saves a one-line session summary learning |
 | `on-subagent.sh` | SubagentStart | Injects session context into subagents |
 | *(inline)* | PreCompact | Checkpoints before context window compresses |
 | *(inline)* | PostCompact | Re-injects context after compaction |
@@ -273,7 +275,7 @@ Each file edit  → on-edit tracks diff + re-indexes symbols
 
 git commit      → on-bash tags files + derives learnings from commit
 
-Session end     → on-stop parses transcript → checkpoint in DB
+Session end     → on-stop saves a one-line session summary
 
 When done       → agora-code complete --summary "..." archives to long-term
 ```
@@ -314,6 +316,7 @@ agora-code checkpoint --next "Write edge case test" --blocker "Waiting on review
 | `--context` | Free-text notes |
 | `--next` | Next step (repeatable) |
 | `--blocker` | Blocker (repeatable) |
+| `--if-stale` | Only save when there's no checkpoint yet or the last session was completed; starts a new session (used by `on-prompt.sh`) |
 
 ---
 

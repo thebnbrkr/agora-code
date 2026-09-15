@@ -13,7 +13,7 @@ This project provides persistent memory and API discovery for AI agents.
 
 ## How it works
 
-Everything is automatic via Claude Code hooks. When you read a file, symbols and code blocks are indexed. When a session ends, the transcript is parsed into a structured checkpoint. On every prompt, relevant learnings are recalled.
+Everything is automatic via Claude Code hooks. When you read a file, symbols and code blocks are indexed. When a session ends, a one-line summary is saved as a learning. On every prompt, relevant learnings are recalled.
 
 **You do not need to manually run `agora-code learn` or `agora-code recall`** — the hooks handle it.
 
@@ -56,6 +56,6 @@ All done  → agora-code complete --summary "..."
 
 - **symbol_notes**: every function/class with `start_line`, `end_line`, `signature`, `note`, `code_block`
 - **file_snapshots**: compressed AST outline of each file read
-- **learnings**: commit change notes (one per file per commit) + checkpoint from last session
-- **sessions**: stores compressed transcript of last session — injected as LAST SESSION context on next start
+- **learnings**: commit change notes (one per file per commit) + one-line session summaries
+- **sessions**: one row per session (goal, next steps, blockers, checkpoint stamps) — the newest with content is injected as LAST CHECKPOINT
 - **file_changes**: diff history per file, tagged with commit SHA on commit

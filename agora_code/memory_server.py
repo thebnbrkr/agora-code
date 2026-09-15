@@ -292,7 +292,7 @@ async def _handle_get_session_context(params: dict) -> str:
     if not session.get("context"):
         recalled = _build_recalled_context()
         if recalled:
-            session = update_session({"context": recalled})
+            session = update_session({"context": recalled}, mark_checkpoint=False)
 
     level = params.get("level", "detail")  # default: detail for AI agents
     if level == "full":
